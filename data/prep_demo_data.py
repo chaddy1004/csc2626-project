@@ -40,8 +40,8 @@ def prep_demo_data(frames, actions, rewards, endings):
     
     # Compress and save data
     print("Pickling and saving!")
-    # with open(cfg.DEMO_DATA_PATH, 'wb') as fid:
-    #     pickle.dump(demo_buffer, fid, protocol=4)
+    with open(cfg.DEMO_DATA_PATH, 'wb') as fid:
+        pickle.dump(demo_buffer, fid, protocol=4)
     return demo_buffer
 
 
