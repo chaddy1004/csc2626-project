@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from collections import deque
 from Config import Config as cfg
@@ -15,7 +16,7 @@ def prep_demo_data(frames, actions, rewards, endings):
     episode = 0
     N = len(frames) # total number of frames (spanning multiple trials and episodes)
     i = 0
-    while i < N -1:
+    while i < N:
         state = frames[i]
         action = actions[i]
         next_sate = frames[i+1]
@@ -37,12 +38,42 @@ def prep_demo_data(frames, actions, rewards, endings):
             i += 2
             continue
         i += 1
-    
     # Compress and save data
     print("Pickling and saving!")
     with open(cfg.DEMO_DATA_PATH, 'wb') as fid:
         pickle.dump(demo_buffer, fid, protocol=4)
     return demo_buffer
+
+
+def prep_expert_panda(frames, actions, rewards, endings, df):
+    """Prepare demonstration data dataframe to be used in dataloader
+        Returns dataframe containing filenames of current states and next states
+    """
+
+    d = {'state':[], 'action':[], 'reward':[], 'next':[], 'end':[], 'episode': []}
+    episode = 0
+    N = len(frames)
+    i = 0
+    while i < N:
+        d['state'].append(df['png_names'][i])
+        d['action'].append(actions[i])
+        d['next'].append(df['png_names'][i+1])
+        done = endings[i+1]
+        d['end'].append(done)
+        d['reward'].append(rewards[i+1] if not done else -100)
+        d['episode'].append(episode)
+
+        if done:
+            done = False
+            episode += 1
+            i += 2
+            continue
+        i += 1
+    demo_df = pd.DataFrame(data=d)
+    print("Exporting panda to csv!")
+    demo_df.to_csv(cfg.DATA_PATH + 'demo_df.csv', index=False)
+    return demo_df
+       
 
 
 if __name__ == "__main__":
@@ -51,12 +82,16 @@ if __name__ == "__main__":
     # to find out how the .npy files are generated
     # NOTE: no frame skips were performed yet
     frames = np.load(cfg.DATA_PATH + cfg.GAME_ID + "_frames.npy")
+    frames_df = pd.read_csv(cfg.DATA_PATH + "mr_demo_data.csv")
     actions = np.load(cfg.DATA_PATH + cfg.GAME_ID + "_actions.npy")
     rewards = np.load(cfg.DATA_PATH + cfg.GAME_ID + "_rewards.npy")
     episode_endings = np.load(cfg.DATA_PATH + cfg.GAME_ID +  "_episode_endings.npy")
 
     # Prepare demonstration data
     demo_buffer = prep_demo_data(frames, actions, rewards, episode_endings)
+
+    # Prepare demonstration dataframe
+    demo_df = prep_expert_panda(frames, actions, rewards, episode_endings, frames_df)
 
     # Env
     # game_id = 'MontezumaRevengeNoFrameskip-v4'
