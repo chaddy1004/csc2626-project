@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as transforms
+from cv2 import cvtColor, COLOR_BGR2GRAY, resize, INTER_AREA
 from PIL import Image
 
 # DATALOADER
@@ -41,6 +42,19 @@ class ExpertDemonstrations(Dataset):
         return (current_state, action, reward, next_state)
 
 
+class GrayResizeTransform:
+    """Transformation to match pickled data
+        Returns gray (84x84) numpy array
+    """
+    
+    def __call__(self, img):
+        gray = cvtColor(np.array(img), COLOR_BGR2GRAY)
+        resized = resize(gray, (84, 105), interpolation=INTER_AREA)
+        # Crop the score heading and black bar at the bottom of the frame
+        cropped = resized[15:99]
+        return cropped
+
+
 if __name__ == "__main__":
     # Test
     root_data_dir = "./AtariHEADArchives/montezuma_revenge/"
@@ -48,14 +62,15 @@ if __name__ == "__main__":
 
     # Transforms
     transform = transforms.Compose([
-        transforms.ToTensor()
+        GrayResizeTransform(),
+        # transforms.ToTensor() # uncomment for training
     ])
 
     # Dataset
     dataset = ExpertDemonstrations(
         dataframe=demo_data,
         root_dir=root_data_dir,
-        # transform=transform,
+        transform=transform,
         training=True
     )
 
