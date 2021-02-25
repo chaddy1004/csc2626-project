@@ -1,8 +1,10 @@
+import os, sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from collections import deque
-from Config import Config as cfg
+sys.path.append(os.path.abspath(os.path.join('..')))
+from config import Config as cfg
 import gym
 import pickle
 
@@ -82,7 +84,7 @@ if __name__ == "__main__":
     # to find out how the .npy files are generated
     # NOTE: no frame skips were performed yet
     frames = np.load(cfg.DATA_PATH + cfg.GAME_ID + "_frames.npy")
-    frames_df = pd.read_csv(cfg.DATA_PATH + "mr_demo_data.csv")
+    frames_df = pd.read_csv(cfg.DATA_PATH + "mr_demo_data_df.csv")
     actions = np.load(cfg.DATA_PATH + cfg.GAME_ID + "_actions.npy")
     rewards = np.load(cfg.DATA_PATH + cfg.GAME_ID + "_rewards.npy")
     episode_endings = np.load(cfg.DATA_PATH + cfg.GAME_ID +  "_episode_endings.npy")
