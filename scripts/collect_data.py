@@ -25,21 +25,6 @@ def get_args():
 
     return args
 
-class Noise:
-    def __init__(self):
-        pass
-
-    def sample_noise(self):
-        raise NotImplementedError
-
-
-class UniformNoise:
-    def __init__(self, cfg):
-        super().__init__()
-
-    def sample_noise(self):
-        pass
-
 
 def get_policy(policy_file, n_states, n_actions):
     print(policy_file)
@@ -49,7 +34,6 @@ def get_policy(policy_file, n_states, n_actions):
         model.load_state_dict(torch.load(policy_file))
         model.eval()
         return model
-        return torch.load(policy_file, map_location=torch.device('cpu'))
     return None
 
 
