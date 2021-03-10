@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 
 from ExpertPolicy.network import Actor
-from utils.corrupted_policy import Policy, NoisyPolicy
+from utils.corrupted_policy import Policy, NoisyPolicy, LaggyPolicy
 
 
 def get_args():
@@ -74,6 +74,7 @@ def get_episode_data(env, policy=None, noise=None, max_iterations=1000):
     rewards = rewards[:-1]
     dones = dones[1:]
     print(f'Reward: {np.sum(rewards)}')
+    print(f'Steps to completion: {rewards.shape[0]}')
 
     return curr_states, next_states, actions, rewards, dones
 
@@ -88,10 +89,14 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
     random.seed(args.seed)
 
+    print(f'Seed: {args.seed}')
+
     df_all = pd.DataFrame()
     policy = get_policy(args.policy_file, n_states=env.observation_space.shape[0], n_actions=env.action_space.shape[0])
     if args.noise_type == 'noisy':
         policy = NoisyPolicy(policy, env)
+    elif args.noise_type == 'laggy':
+        policy = LaggyPolicy(policy)
     else:
         policy = Policy(policy)
 
@@ -111,5 +116,5 @@ if __name__ == '__main__':
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / f'{args.env}_{args.noise_type}_{args.num_episodes}.csv'
+    output_file = output_dir / f'{args.env}_{args.noise_type}_{args.seed}.csv'
     df_all.to_csv(output_file, index=False)
