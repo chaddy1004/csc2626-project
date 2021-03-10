@@ -5,13 +5,25 @@ from functools import partial
 import gym
 import numpy as np
 import pandas as pd
+import torch
+
+from data.noise import UniformNoise
+
+torch.autograd.set_detect_anomaly(True)
+
+if torch.cuda.device_count() > 0:
+    print("RUNNING ON GPU")
+    DEVICE = torch.device('cuda')
+else:
+    print("RUNNING ON CPU")
+    DEVICE = torch.device('cpu')
 
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--env', type=str, default='LunarLanderContinuous-v2')
-    parser.add_argument('--policy_file', type=str, default='')
+    parser.add_argument('--policy_file', type=str, default='policies/policy_trained_on_gpu.pt')
     parser.add_argument('--output_dir', type=str, default='collected_data/')
     parser.add_argument('--noise_type', choices=['none', 'uniform', 'gaussian'], default='none')
     parser.add_argument('--num_episodes', type=int, default=1)
@@ -22,23 +34,11 @@ def get_args():
 
     return args
 
-class Noise:
-    def __init__(self):
-        pass
-
-    def sample_noise(self):
-        raise NotImplementedError
-
-
-class UniformNoise:
-    def __init__(self, cfg):
-        super().__init__()
-
-    def sample_noise(self):
-        pass
-
 
 def get_policy(policy_file):
+    print(policy_file)
+    if policy_file:
+        return torch.load(policy_file, map_location=torch.device('cpu'))
     return None
 
 
@@ -51,16 +51,24 @@ def get_episode_data(env, policy=None, noise=None, max_iterations=1000):
     rewards = []
     dones = []
 
+    state = env.reset()
+    state = state.reshape((1, env.observation_space.shape[0]))
+
+    added_noise = UniformNoise()
+
+
     for _ in range(max_iterations):
         env.render()
-        # TOOD (get policy here)
         if policy is None:
             action = env.action_space.sample()
         else:
-            raise NotImplementedError
+            state_tensor = torch.from_numpy(state)
+            action, _ = policy.get_action(state_tensor, train=False)
 
+        action = added_noise.add_noise(action)
         state, reward, done, _ = env.step(action)
-        states.append(state)
+        state = state.reshape((1, env.observation_space.shape[0]))
+        states.append(state.squeeze())
         actions.append(action)
         rewards.append(reward)
         dones.append(done)
@@ -89,6 +97,8 @@ if __name__ == '__main__':
 
     df_all = pd.DataFrame()
     policy = get_policy(args.policy_file)
+    print(policy)
+    print(dir(policy))
 
     for episode in range(args.num_episodes):
         curr_states, next_states, actions, rewards, dones = get_episode_data(env, policy=policy, noise=args.noise_type, max_iterations=args.max_iterations)
