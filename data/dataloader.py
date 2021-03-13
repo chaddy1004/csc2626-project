@@ -1,13 +1,12 @@
 import os, sys
-import glob
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 sys.path.append(os.path.abspath(os.path.join('..')))
 from config import Config as cfg
+from data_utils import *
 
 # DATALOADER
 class OfflineDataset(Dataset):
@@ -41,51 +40,10 @@ class OfflineDataset(Dataset):
 
 
 
-def get_weighted_sampler(ratio, normalize=False):
-    """
-    Returns dataframe and WeightedRandomSampler based on desired ratio of sub-optimal to 
-    optimal data rollouts
-        ratio: split tuple of opt to sub-opt data, e.g. (0.1, 0.9) for
-               10% optimal and 90% suboptimal training data
-        normalize: whether the weights should be normalized based on count
-    """
-
-    assert np.sum(ratio) == 1.0, "Ratios should some up to 1.0"
-    files = glob.glob(os.path.join(cfg.DATA_PATH, "*.csv"))
-    weights = torch.Tensor()
-    df = pd.DataFrame()
-    rollout_mapping = {"none": 0, "laggy": 1, "noisy": 2}
-    rollout_count = {"opt": 0, "subopt": 0}
-    for file in files:
-        rollout = pd.read_csv(file, header=0, index_col=None)
-        rollout_type = file.split("_")[1]
-        # Append rollout type column to dataframe
-        rollout['type'] = rollout_mapping[rollout_type]
-
-        if rollout_type == cfg.OPT_LABEL:
-            rollout_count["opt"] += len(rollout)
-            weights = torch.cat((weights, ratio[0]*torch.ones(len(rollout))))
-        else:
-            rollout_count["subopt"] += len(rollout)
-            weights = torch.cat((weights, ratio[1]*torch.ones(len(rollout))))
-
-        df = pd.concat((df, rollout))
-
-    # Balancing based on opt vs subopt data availability
-    if normalize:
-        weights[weights==ratio[0]] /= (rollout_count["opt"])#*ratio[0]
-        weights[weights==ratio[1]] /= (rollout_count["subopt"])#*ratio[1]
-
-    # NOTE: sampeld with replacement by default
-    sampler = WeightedRandomSampler(weights, len(weights))
-    return df, sampler
-
-
-
 if __name__ == "__main__":
     # Test
-    ratio = (0.3, 0.7)
-    rollouts_df, weighted_sampler = get_weighted_sampler(ratio, normalize=True)
+    ratio = (0.4, 0.6)
+    rollouts_df, weighted_sampler, weights = get_weighted_sampler(ratio, normalize=True)
 
     # Dataset
     dataset = OfflineDataset(
