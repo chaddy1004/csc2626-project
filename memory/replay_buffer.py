@@ -11,8 +11,12 @@ from collections import deque
 import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join('..')))
+sys.path.append(os.path.abspath(os.path.join('..', 'data')))
 from config import Config as cfg
+from data_utils import *
+
 np.random.seed(1)
+torch.manual_seed(1)
 
 
 class SumTree(object):
@@ -77,9 +81,11 @@ class Memory(object):
     beta_increment_per_sampling = 0.001
     abs_err_upper = 1.  # clipped abs error
 
-    def __init__(self, capacity, permanent_data=0):
+    def __init__(self, capacity, permanent_data=0, weights=None, offline=False):
         self.permanent_data = permanent_data
         self.tree = SumTree(capacity, permanent_data)
+        self.weights = weights
+        self.offline = offline
 
     def __len__(self):
         return len(self.tree)
@@ -94,22 +100,31 @@ class Memory(object):
         self.tree.add(max_p, transition)  # set the max_p for new transition
 
     def sample(self, n):
-        assert self.full()
-        b_idx = np.empty((n,), dtype=np.int32)
-        b_memory = np.empty((n, self.tree.data[0].size), dtype=object)
-        ISWeights = np.empty((n, 1)) # importance sampling
-        pri_seg = self.tree.total_p / n
-        self.beta = np.min([1., self.beta + self.beta_increment_per_sampling])
+        if self.offline:
+            assert self.weights is not None
+            indices = torch.multinomial(self.weights, n, replacement=True)
+            b_memory = self.tree.data[indices]
+            # For completeness: compute matching tree indices and set IS to ones
+            b_idx = indices + self.tree.capacity - 1 # tree indices
+            ISWeights = np.ones((n, 1)) # importance sampling weights
+        else:
+            assert self.full()
+            b_idx = np.empty((n,), dtype=np.int32)
+            b_memory = np.empty((n, self.tree.data[0].size), dtype=object)
+            ISWeights = np.empty((n, 1)) # importance sampling
+            pri_seg = self.tree.total_p / n
+            print(self.tree.total_p, pri_seg, n)
+            self.beta = np.min([1., self.beta + self.beta_increment_per_sampling])
 
-        min_prob = np.min(self.tree.tree[-self.tree.capacity:]) / self.tree.total_p
-        assert min_prob > 0
+            min_prob = np.min(self.tree.tree[-self.tree.capacity:]) / self.tree.total_p
+            assert min_prob > 0
 
-        for i in range(n):
-            v = np.random.uniform(pri_seg * i, pri_seg * (i + 1))
-            idx, p, data = self.tree.get_leaf(v)  # note: idx is the index in self.tree.tree
-            prob = p / self.tree.total_p
-            ISWeights[i, 0] = np.power(prob/min_prob, -self.beta)
-            b_idx[i], b_memory[i] = idx, data
+            for i in range(n):
+                v = np.random.uniform(pri_seg * i, pri_seg * (i + 1))
+                idx, p, data = self.tree.get_leaf(v)  # note: idx is the index in self.tree.tree
+                prob = p / self.tree.total_p
+                ISWeights[i, 0] = np.power(prob/min_prob, -self.beta)
+                b_idx[i], b_memory[i] = idx, data
         return b_idx, b_memory, ISWeights  # note: b_idx stores indexes in self.tree.tree, not in self.tree.data !!!
 
     # update priority
@@ -125,24 +140,26 @@ class Memory(object):
 
 if __name__ == "__main__":
     # Test
-    with open(cfg.DEMO_DATA_PATH, 'rb') as fid:
-        demo_data = pickle.load(fid)
-        demo_data = deque(demo_data)
-
+    ratio = (0.4, 0.6)
+    rollouts_df, weighted_sampler, weights = get_weighted_sampler(ratio, normalize=True)
+    rollouts = rollouts_df.to_numpy()
+    
     # NOTE: For now, set capacity to length of demo data since should only sample once full
     # although will probably need to reduce size of demo data and increase capacity in the future
-    capacity = len(demo_data)
-    replay_memory = Memory(capacity=capacity, permanent_data=len(demo_data))
+    capacity = len(rollouts)
+
+    # If offline: provide weights based on ratio of optimal to suboptimal data
+    replay_memory = Memory(capacity=capacity, permanent_data=len(rollouts), weights=weights, offline=True)
 
     # Adding demo data tuples to memory
-    for t in demo_data:
-        replay_memory.store(np.array(t, dtype=object))
+    for t in rollouts:
+        replay_memory.store(t)
 
-    # NOTE: sample replay memory
-    # batch size --> n: number of <s,a,r,s',done> samples from the tree 
-    # importance sampling weights will be all 1s for now because only expert data in buffer
-    # tree_indices are needed to update the tree after each training iteration
-    bs = 32
-    tree_indices, minibatch, importance_sampling_weights = replay_memory.sample(bs)
-    plt.imshow(minibatch[0][0])
-    plt.show()
+    # Sampling replay memory
+    # batch size --> n: number of <s,a,r,s',done,type> sampled from the tree
+    # tree_indices: needed (needed only online) to update the tree after each training iteration
+    # importance_sampling_weights (needed only online): will be all 1s for now because only demo data in buffer
+    tree_indices, minibatch, importance_sampling_weights = replay_memory.sample(cfg.BS)
+    print("Batch size: ", len(minibatch))
+    print("Tuple size: ", len(minibatch[0]))
+
