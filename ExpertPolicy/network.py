@@ -2,9 +2,8 @@ import random
 
 import numpy as np
 import torch
-from torch.nn import Module, Linear, ReLU, Sequential, init
-
 from torch.distributions import Normal
+from torch.nn import Module, Linear, ReLU, Sequential
 
 torch.manual_seed(19971124)
 np.random.seed(42)

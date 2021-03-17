@@ -1,16 +1,20 @@
-import os, sys
 import glob
+import os
+import random
+import sys
+
+import gym
 import numpy as np
 import pandas as pd
-import random
-import gym
 import torch
 from torch.utils.data import WeightedRandomSampler
 
-sys.path.append(os.path.abspath(os.path.join('..')))
 from config import Config as cfg
 
-def rollout_viz(env, data, seed=None, render=False):
+sys.path.append(os.path.abspath(os.path.join('..')))
+
+
+def rollout_viz(env, data, render=False, seed=None):
     """Visualize previously saved rollouts in the gym env"""
 
     total_reward = 0
@@ -32,7 +36,7 @@ def rollout_viz(env, data, seed=None, render=False):
         if render:
             still_open = env.render()
             if still_open == False: break
-        
+
         if steps % 20 == 0 or done:
             print("observations:", " ".join(["{:+0.2f}".format(x) for x in s]))
             print("step {} total_reward {:+0.2f}".format(steps, total_reward))
@@ -58,31 +62,30 @@ def get_weighted_sampler(ratio, normalize=False):
     rollout_count = {"opt": 0, "subopt": 0}
     for file in files:
         rollout = pd.read_csv(file, header=0, index_col=None)
-        rollout_type = file.split("_")[1]
+        rollout_type = file.split("_")[1] # "laggy", "noisy", or "none"
         # Append rollout type column to dataframe
         rollout['type'] = rollout_mapping[rollout_type]
 
         if rollout_type == cfg.OPT_LABEL:
             rollout_count["opt"] += len(rollout)
-            weights = torch.cat((weights, ratio[0]*torch.ones(len(rollout))))
+            weights = torch.cat((weights, ratio[0] * torch.ones(len(rollout))))
         else:
             rollout_count["subopt"] += len(rollout)
-            weights = torch.cat((weights, ratio[1]*torch.ones(len(rollout))))
+            weights = torch.cat((weights, ratio[1] * torch.ones(len(rollout))))
 
         df = pd.concat((df, rollout))
 
     # Balancing based on opt vs subopt data availability
     if normalize:
         # N = len(weights)
-        weights[weights==ratio[0]] /= (rollout_count["opt"])#*ratio[0]
-        weights[weights==ratio[1]] /= (rollout_count["subopt"])#*ratio[1]
+        weights[weights == ratio[0]] /= (rollout_count["opt"])  # *ratio[0]
+        weights[weights == ratio[1]] /= (rollout_count["subopt"])  # *ratio[1]
         # weights[weights==ratio[0]] = (N/rollout_count["opt"]*ratio[0])
         # weights[weights==ratio[1]] = (N/rollout_count["subopt"]*ratio[1])
 
     # NOTE: sampeld with replacement by default
     sampler = WeightedRandomSampler(weights, len(weights))
     return df, sampler, weights
-
 
 
 if __name__ == '__main__':
@@ -94,13 +97,13 @@ if __name__ == '__main__':
 
     # Rollout tuple:
     # <s0,..,s7,a0,a1,r,s'1,...,s'7,done,episode>
-    rollout = pd.read_csv(rollout_name, header=0).to_numpy() # shape: (N x 21)
-    
+    rollout = pd.read_csv(rollout_name, header=0).to_numpy()  # shape: (N x 21)
+
     # Fixing seeds for reproducible behaviour
     env = gym.make('LunarLanderContinuous-v2')
     env.seed(seed)
     env.action_space.seed(seed)
     np.random.seed(seed)
     random.seed(seed)
-    
+
     rollout_viz(env, rollout, seed=int(seed), render=True)

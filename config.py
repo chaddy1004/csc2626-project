@@ -7,5 +7,5 @@ class Config:
     OPT_LABEL = 'none'
     
     # TRAINING
-    BS = 32
+    BS = 64
     WORKERS = 1

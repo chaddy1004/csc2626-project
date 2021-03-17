@@ -1,12 +1,15 @@
-import os, sys
+import os
+import sys
+
 import numpy as np
-import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+from torch.utils.data import DataLoader, Dataset
+
+from config import Config as cfg
+from data.data_utils import get_weighted_sampler
 
 sys.path.append(os.path.abspath(os.path.join('..')))
-from config import Config as cfg
-from data_utils import *
+
 
 # DATALOADER
 class OfflineDataset(Dataset):
@@ -23,10 +26,8 @@ class OfflineDataset(Dataset):
         self.episode = self.data[:, 20]
         self.type = self.data[:, -1]
 
-    
     def __len__(self):
         return len(self.data)
-
 
     def __getitem__(self, idx):
         # Return tuple <s,a,r,s',done,type>
@@ -37,7 +38,6 @@ class OfflineDataset(Dataset):
                 self.next_states[idx],
                 self.done[idx],
                 self.type[idx])
-
 
 
 if __name__ == "__main__":
@@ -68,9 +68,9 @@ if __name__ == "__main__":
     subopt = 0
     for i, data in enumerate(train_loader):
         counts = np.unique(data[-1].numpy(), return_counts=True)
-        print("Batch ratio: ", counts[1][0]/np.sum(counts[1]), np.sum(counts[1][1:])/np.sum(counts[1]))
+        print("Batch ratio: ", counts[1][0] / np.sum(counts[1]), np.sum(counts[1][1:]) / np.sum(counts[1]))
         opt += counts[1][0]
         subopt += np.sum(counts[1][1:])
         if i > 10:
             break
-    print("Overall ratio: ", opt/(opt+subopt), subopt/(opt+subopt))
+    print("Overall ratio: ", opt / (opt + subopt), subopt / (opt + subopt))

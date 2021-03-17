@@ -4,19 +4,21 @@ Memory is based on a SumTree ordered according to the TD loss between Q function
 See the following for original implementation:
 https://github.com/go2sea/DQfD/blob/951d2c2f5db312bec1390a624d7f6bb7d00b7806/Memory.py 
 """
-import os, sys
+import os
+import sys
+
 import numpy as np
-import pickle
-from collections import deque
-import matplotlib.pyplot as plt
+import torch
+
+from config import Config as cfg
+from data.data_utils import get_weighted_sampler
 
 sys.path.append(os.path.abspath(os.path.join('..')))
 sys.path.append(os.path.abspath(os.path.join('..', 'data')))
-from config import Config as cfg
-from data_utils import *
+# from data.data_utils import *
 
-np.random.seed(1)
-torch.manual_seed(1)
+# np.random.seed(1)
+# torch.manual_seed(1)
 
 
 class SumTree(object):
