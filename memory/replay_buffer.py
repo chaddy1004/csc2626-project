@@ -27,7 +27,7 @@ class SumTree(object):
     def __init__(self, capacity, permanent_data=0):
         self.capacity = capacity
         self.tree = np.zeros(2 * capacity - 1)          # ordering is based on TD error
-        self.data = np.zeros(capacity, dtype=object)    # data items are <s,a,r,s',done> transitions
+        self.data = np.zeros((capacity, 22), dtype=np.float32)    # data items are <s,a,r,s',done> transitions
         self.permanent_data = permanent_data            # expert data to be kept in the buffer permanently
         assert 0 <= self.permanent_data <= self.capacity
         self.full = False
@@ -37,7 +37,7 @@ class SumTree(object):
 
     def add(self, p, data):
         tree_idx = self.data_pointer + self.capacity - 1
-        self.data[self.data_pointer] = data
+        self.data[self.data_pointer, ...] = data
         self.update(tree_idx, p)
         self.data_pointer += 1
         if self.data_pointer >= self.capacity:
