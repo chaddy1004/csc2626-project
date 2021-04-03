@@ -55,16 +55,15 @@ def get_weighted_sampler(ratio, normalize=False):
     """
 
     assert np.sum(ratio) == 1.0, "Ratios should some up to 1.0"
+    ratio *= np.random.uniform(0.999, 1.001, 2)
+
     files = glob.glob(os.path.join(cfg.DATA_PATH, "*.csv"))
     weights = torch.Tensor()
     df = pd.DataFrame()
-    rollout_mapping = {"none": 0, "laggy": 1, "noisy": 2}
     rollout_count = {"opt": 0, "subopt": 0}
     for file in files:
         rollout = pd.read_csv(file, header=0, index_col=None)
-        rollout_type = file.split("_")[1] # "laggy", "noisy", or "none"
-        # Append rollout type column to dataframe
-        rollout['type'] = rollout_mapping[rollout_type]
+        rollout_type = rollout['policy_type'][0]
 
         if rollout_type == cfg.OPT_LABEL:
             rollout_count["opt"] += len(rollout)
@@ -77,14 +76,11 @@ def get_weighted_sampler(ratio, normalize=False):
 
     # Balancing based on opt vs subopt data availability
     if normalize:
-        # N = len(weights)
-        weights[weights == ratio[0]] /= (rollout_count["opt"])  # *ratio[0]
-        weights[weights == ratio[1]] /= (rollout_count["subopt"])  # *ratio[1]
-        # weights[weights==ratio[0]] = (N/rollout_count["opt"]*ratio[0])
-        # weights[weights==ratio[1]] = (N/rollout_count["subopt"]*ratio[1])
+        weights[weights == ratio[0]] /= (rollout_count["opt"])
+        weights[weights == ratio[1]] /= (rollout_count["subopt"])
 
-    # NOTE: sampeld with replacement by default
-    sampler = WeightedRandomSampler(weights, len(weights))
+    # NOTE: sampled with replacement by default
+    sampler = WeightedRandomSampler(weights, len(weights), replacement=False)
     return df, sampler, weights
 
 
