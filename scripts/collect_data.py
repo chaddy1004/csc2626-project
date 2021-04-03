@@ -10,6 +10,12 @@ import torch
 from ExpertPolicy.network import Actor
 from utils.corrupted_policy import Policy, NoisyPolicy, LaggyPolicy
 
+noise_type_to_policy_type = {
+    'none': 0,
+    'laggy': 1,
+    'noisy': 2
+}
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -19,7 +25,7 @@ def get_args():
     parser.add_argument('--output_dir', type=str, default='output/')
     parser.add_argument('--noise_type', choices=['none', 'noisy', 'laggy'], default='none')
     parser.add_argument('--num_episodes', type=int, default=1)
-    parser.add_argument('--max_iterations', type=int, default=1000)
+    parser.add_argument('--max_iterations', type=int, default=500)
     args = parser.parse_args()
 
     assert args.num_episodes > 0
@@ -100,6 +106,8 @@ if __name__ == '__main__':
     else:
         policy = Policy(policy)
 
+    policy_type = noise_type_to_policy_type[args.noise_type]
+
     for episode in range(args.num_episodes):
         print(f'Episode: {episode+1}')
         curr_states, next_states, actions, rewards, dones = get_episode_data(env, policy=policy, noise=args.noise_type, max_iterations=args.max_iterations)
@@ -110,6 +118,7 @@ if __name__ == '__main__':
         df_next_states = pd.DataFrame(data=next_states, columns=[f'next_state_{i}' for i in range(next_states.shape[-1])])
         df_next_states['done'] = dones*1
         df_next_states['episode'] = episode
+        df_next_states['policy_type'] = policy_type
 
         df_episode = pd.concat([df_curr_states, df_actions, df_next_states], axis=1)
         df_all = pd.concat([df_all, df_episode])
