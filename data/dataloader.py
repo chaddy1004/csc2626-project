@@ -5,10 +5,9 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+sys.path.append(os.path.abspath(os.path.join('..')))
 from config import Config as cfg
 from data.data_utils import get_weighted_sampler
-
-sys.path.append(os.path.abspath(os.path.join('..')))
 
 
 # DATALOADER
@@ -42,7 +41,7 @@ class OfflineDataset(Dataset):
 
 if __name__ == "__main__":
     # Test
-    ratio = (0.4, 0.6)
+    ratio = (0.9, 0.1)
     rollouts_df, weighted_sampler, weights = get_weighted_sampler(ratio, normalize=True)
 
     # Dataset
@@ -61,16 +60,15 @@ if __name__ == "__main__":
     )
 
     # Enumeration shows split between optimal and suboptimal
-    # NOTE: sampling with ratios (1, 0), (0, 1) or (0.5, 0.5) breaks down
-    # instead, I used (0.99, 0.01), (0.01, 0.99) and (0.49, 0.51) as an approximation
-    # TODO: fix this!
     opt = 0
     subopt = 0
     for i, data in enumerate(train_loader):
         counts = np.unique(data[-1].numpy(), return_counts=True)
-        print("Batch ratio: ", counts[1][0] / np.sum(counts[1]), np.sum(counts[1][1:]) / np.sum(counts[1]))
-        opt += counts[1][0]
-        subopt += np.sum(counts[1][1:])
+        opt_count = np.sum(counts[1][counts[0] == 0])
+        subopt_count  = np.sum(counts[1][counts[0] != 0])
+        print("Batch ratio: ", opt_count / np.sum(counts[1]), subopt_count / np.sum(counts[1]))
+        opt += opt_count
+        subopt += subopt_count
         if i > 10:
             break
     print("Overall ratio: ", opt / (opt + subopt), subopt / (opt + subopt))
