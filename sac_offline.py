@@ -31,10 +31,10 @@ else:
 
 
 class SACOffline:
-    def __init__(self, n_states, n_actions):
+    def __init__(self, n_states, n_actions, ratio):
         # Test
-        ratio = (1.0, 0.0)
-        rollouts_df, weighted_sampler, weights = get_weighted_sampler(ratio, normalize=True)
+        self.ratio = ratio
+        rollouts_df, weighted_sampler, weights = get_weighted_sampler(self.ratio, normalize=True)
         rollouts = rollouts_df.to_numpy()
 
         # NOTE: For now, set capacity to length of demo data since should only sample once full
@@ -91,20 +91,46 @@ class SACOffline:
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
         self.optim_critic_2 = Adam(params=self.critic2.parameters(), lr=self.lr)
 
-    def get_v(self, state_batch, action, log_action_probs):
-        # TODO: move code from main train() function
+    def get_v(self, state_batch):
+        action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
+        q_values = self.target_critic(state_batch, action_batch).detach()  # (batch, 1)
+        q_values_2 = self.target_critic2(state_batch, action_batch).detach()
+        value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs
+        return value.detach()
+
+    def train_actor(self, s_currs, sample_action, log_action_probs):
+        q_values_new = self.critic(s_currs, sample_action)
+        q_values_new_2 = self.critic2(s_currs, sample_action)
+        loss_actor = (self.alpha * log_action_probs) - torch.min(q_values_new, q_values_new_2)
+
+        loss_actor = torch.mean(loss_actor)
+        self.optim_actor.zero_grad()
+        loss_actor.backward()
+        self.optim_actor.step()
         return
 
-    def train_actor(self, s_currs):
-        # TODO: move code from main train() function
+    def train_alpha(self, log_action_probs):
+        alpha_loss = torch.mean((-1 * torch.exp(self.log_alpha)) * (log_action_probs.detach() + self.H))
+        self.optim_alpha.zero_grad()
+        alpha_loss.backward()
+        self.optim_alpha.step()
+        self.alpha = torch.exp(self.log_alpha)
         return
 
-    def train_alpha(self, s_currs, log_action_probs):
-        # TODO: move code from main train() function
-        return
+    def train_critic(self, value, s_currs, a_currs, r, dones):
+        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
+        predicts2 = self.critic2(s_currs, a_currs)
+        target = r + ((1 - dones) * self.gamma * value)
 
-    def train_critic(self, s_currs, a_currs, r, s_nexts, dones, a_nexts, log_action_probs_next):
-        # TODO: move code from main train() function
+        loss = mse_loss_function(predicts, target)
+        self.optim_critic.zero_grad()
+        loss.backward()
+        self.optim_critic.step()
+
+        loss2 = mse_loss_function(predicts2, target)
+        self.optim_critic_2.zero_grad()
+        loss2.backward()
+        self.optim_critic_2.step()
         return
 
     def process_batch(self, x_batch):
@@ -118,42 +144,11 @@ class SACOffline:
 
     def train(self, x_batch):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
-
-        a_nexts, log_action_probs_next = self.actor.get_action(s_nexts, train=True)
-
-        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
-        predicts2 = self.critic2(s_currs, a_currs)
-
-        q_values = self.target_critic(s_nexts, a_nexts).detach()  # (batch, 1)
-        q_values_2 = self.target_critic2(s_nexts, a_nexts).detach()
-        value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs_next
-
-        target = r + ((1 - dones) * self.gamma * value.detach())
-        loss = mse_loss_function(predicts, target)
-        self.optim_critic.zero_grad()
-        loss.backward()
-        self.optim_critic.step()
-
-        loss2 = mse_loss_function(predicts2, target)
-        self.optim_critic_2.zero_grad()
-        loss2.backward()
-        self.optim_critic_2.step()
-
+        value = self.get_v(state_batch=s_nexts)
+        self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
-        q_values_new = self.critic(s_currs, sample_action)
-        q_values_new_2 = self.critic2(s_currs, sample_action)
-        loss_actor = (self.alpha * log_action_probs) - torch.min(q_values_new, q_values_new_2)
-
-        loss_actor = torch.mean(loss_actor)
-        self.optim_actor.zero_grad()
-        loss_actor.backward()
-        self.optim_actor.step()
-
-        alpha_loss = torch.mean((-1 * torch.exp(self.log_alpha)) * (log_action_probs.detach() + self.H))
-        self.optim_alpha.zero_grad()
-        alpha_loss.backward()
-        self.optim_alpha.step()
-        self.alpha = torch.exp(self.log_alpha)
+        self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
+        self.train_alpha(log_action_probs=log_action_probs)
         self.update_weights()
         return
 
@@ -165,14 +160,14 @@ class SACOffline:
             target_param.data.copy_(self.Tau * local_param.data + (1.0 - self.Tau) * target_param.data)
 
 
-def main(episodes, exp_name, offline):
+def main(episodes, exp_name, offline, overfit):
     logdir = os.path.join("logs", exp_name)
     os.makedirs(logdir, exist_ok=True)
     writer = tf.summary.create_file_writer(logdir)
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
-    agent = SACOffline(n_states=n_states, n_actions=n_actions)
+    agent = SACOffline(n_states=n_states, n_actions=n_actions, ratio=(1.0, 0.0))
     for ep in range(episodes):
         _, data, _ = agent.experience_replay.sample(agent.batch_size)
 
@@ -191,6 +186,10 @@ def main(episodes, exp_name, offline):
         sample.done = done
 
         agent.train(sample)
+        if overfit:
+            print("OVERFITTING: MAKING SAME ENVIRONMENT")
+            env.seed(0)
+            env.action_space.seed(0)
 
         s_curr = env.reset()
         s_curr = np.reshape(s_curr, (1, n_states))
@@ -198,7 +197,6 @@ def main(episodes, exp_name, offline):
         done = False
         score = 0
         step = 0
-
         # run an episode to see how well it does
         while not done:
             s_curr_tensor = torch.from_numpy(s_curr)
@@ -213,7 +211,7 @@ def main(episodes, exp_name, offline):
                 s_next, r, done, _ = env.step(a_curr)
             else:
                 s_next, r, done, _ = env.step(a_curr)
-
+            # env.render()
             s_next = np.reshape(s_next, (1, n_states))
             s_next_tensor = torch.from_numpy(s_next)
             sample = namedtuple('sample', ['s_curr', 'a_curr', 'reward', 's_next', 'done'])
@@ -240,12 +238,14 @@ def main(episodes, exp_name, offline):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exp_name", type=str, default="sac_offline", help="exp_name")
-    ap.add_argument("--episodes", type=int, default=700, help="number of episodes to run")
+    ap.add_argument("--exp_name", type=str, default="sac_offline_small_data_10_00", help="exp_name")
+    ap.add_argument("--episodes", type=int, default=1000, help="number of episodes to run")
     ap.add_argument("--offline", action="store_true", help="number of episodes to run")
+    ap.add_argument("--overfit", action="store_true", help="number of episodes to run")
     args = vars(ap.parse_args())
-    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"])
+    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"],
+                         overfit=args["overfit"])
     if DEVICE == torch.device('cpu'):
-        torch.save(trained_agent.actor, "policy_trained_on_cpu.pt")
+        torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_cpu.pt")
     else:
-        torch.save(trained_agent.actor, "policy_trained_on_gpu.pt")
+        torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_gpu.pt")

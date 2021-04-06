@@ -65,20 +65,46 @@ class SAC:
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
         self.optim_critic_2 = Adam(params=self.critic2.parameters(), lr=self.lr)
 
-    def get_v(self, state_batch, action, log_action_probs):
-        # TODO: move code from main train() function
+    def get_v(self, state_batch):
+        action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
+        q_values = self.target_critic(state_batch, action_batch).detach()  # (batch, 1)
+        q_values_2 = self.target_critic2(state_batch, action_batch).detach()
+        value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs
+        return value.detach()
+
+    def train_actor(self, s_currs, sample_action, log_action_probs):
+        q_values_new = self.critic(s_currs, sample_action)
+        q_values_new_2 = self.critic2(s_currs, sample_action)
+        loss_actor = (self.alpha * log_action_probs) - torch.min(q_values_new, q_values_new_2)
+
+        loss_actor = torch.mean(loss_actor)
+        self.optim_actor.zero_grad()
+        loss_actor.backward()
+        self.optim_actor.step()
         return
 
-    def train_actor(self, s_currs):
-        # TODO: move code from main train() function
+    def train_alpha(self, log_action_probs):
+        alpha_loss = torch.mean((-1 * torch.exp(self.log_alpha)) * (log_action_probs.detach() + self.H))
+        self.optim_alpha.zero_grad()
+        alpha_loss.backward()
+        self.optim_alpha.step()
+        self.alpha = torch.exp(self.log_alpha)
         return
 
-    def train_alpha(self, s_currs, log_action_probs):
-        # TODO: move code from main train() function
-        return
+    def train_critic(self, value, s_currs, a_currs, r, dones):
+        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
+        predicts2 = self.critic2(s_currs, a_currs)
+        target = r + ((1 - dones) * self.gamma * value)
 
-    def train_critic(self, s_currs, a_currs, r, s_nexts, dones, a_nexts, log_action_probs_next):
-        # TODO: move code from main train() function
+        loss = mse_loss_function(predicts, target)
+        self.optim_critic.zero_grad()
+        loss.backward()
+        self.optim_critic.step()
+
+        loss2 = mse_loss_function(predicts2, target)
+        self.optim_critic_2.zero_grad()
+        loss2.backward()
+        self.optim_critic_2.step()
         return
 
     def process_batch(self, x_batch):
@@ -99,42 +125,11 @@ class SAC:
 
     def train(self, x_batch):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
-
-        a_nexts, log_action_probs_next = self.actor.get_action(s_nexts, train=True)
-
-        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
-        predicts2 = self.critic2(s_currs, a_currs)
-
-        q_values = self.target_critic(s_nexts, a_nexts).detach()  # (batch, 1)
-        q_values_2 = self.target_critic2(s_nexts, a_nexts).detach()
-        value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs_next
-
-        target = r + ((1 - dones) * self.gamma * value.detach())
-        loss = mse_loss_function(predicts, target)
-        self.optim_critic.zero_grad()
-        loss.backward()
-        self.optim_critic.step()
-
-        loss2 = mse_loss_function(predicts2, target)
-        self.optim_critic_2.zero_grad()
-        loss2.backward()
-        self.optim_critic_2.step()
-
+        value = self.get_v(state_batch=s_nexts)
+        self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
-        q_values_new = self.critic(s_currs, sample_action)
-        q_values_new_2 = self.critic2(s_currs, sample_action)
-        loss_actor = (self.alpha * log_action_probs) - torch.min(q_values_new, q_values_new_2)
-
-        loss_actor = torch.mean(loss_actor)
-        self.optim_actor.zero_grad()
-        loss_actor.backward()
-        self.optim_actor.step()
-
-        alpha_loss = torch.mean((-1 * torch.exp(self.log_alpha)) * (log_action_probs.detach() + self.H))
-        self.optim_alpha.zero_grad()
-        alpha_loss.backward()
-        self.optim_alpha.step()
-        self.alpha = torch.exp(self.log_alpha)
+        self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
+        self.train_alpha(log_action_probs=log_action_probs)
         self.update_weights()
         return
 
