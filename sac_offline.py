@@ -157,6 +157,7 @@ class SACOffline:
                                     log_action_probs=log_action_probs, bc=baseline)
         value = self.get_v(state_batch=s_nexts)
         loss, loss2 = self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
+
         self.update_weights()
         return loss, loss2, loss_actor, alpha_loss
 
@@ -258,6 +259,7 @@ if __name__ == "__main__":
     args = vars(ap.parse_args())
     trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"],
                          overfit=args["overfit"], baseline=args["bc"])
+
     if DEVICE == torch.device('cpu'):
         torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_cpu.pt")
     else:
