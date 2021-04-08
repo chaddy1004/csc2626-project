@@ -31,6 +31,8 @@ else:
     print("RUNNING ON CPU")
     DEVICE = torch.device('cpu')
 
+RETAIN_GRAPH = False
+
 
 class SACOffline:
     def __init__(self, n_states, n_actions, ratio):
@@ -101,8 +103,8 @@ class SACOffline:
         value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs
         return value
 
-    def train_actor(self, ep, s_currs, a_currs, sample_action, log_action_probs, bc):
-        if bc or ep < self.policy_eval_start:
+    def train_actor(self, ep, s_currs, a_currs, sample_action, log_action_probs):
+        if ep < self.policy_eval_start:
             # Run behaviour cloning as a baseline or as a kickstarter
             policy_log_prob = self.actor.log_prob(s_currs, a_currs)
             loss_actor = torch.mean(self.alpha * log_action_probs - policy_log_prob)
@@ -112,14 +114,14 @@ class SACOffline:
             loss_actor = torch.mean(self.alpha * log_action_probs - torch.min(q_values_new, q_values_new_2))
 
         self.optim_actor.zero_grad()
-        loss_actor.backward(retain_graph=True)
+        loss_actor.backward(retain_graph=RETAIN_GRAPH)
         self.optim_actor.step()
         return loss_actor
 
     def train_alpha(self, log_action_probs):
         alpha_loss = torch.mean((-1 * self.log_alpha) * (log_action_probs + self.H).detach())
         self.optim_alpha.zero_grad()
-        alpha_loss.backward(retain_graph=True)
+        alpha_loss.backward(retain_graph=RETAIN_GRAPH)
         self.optim_alpha.step()
         self.alpha = torch.exp(self.log_alpha)
         return alpha_loss
@@ -131,12 +133,12 @@ class SACOffline:
 
         loss = mse_loss_function(predicts, target.detach())
         self.optim_critic.zero_grad()
-        loss.backward(retain_graph=True)
+        loss.backward(retain_graph=RETAIN_GRAPH)
         self.optim_critic.step()
 
         loss2 = mse_loss_function(predicts2, target.detach())
         self.optim_critic_2.zero_grad()
-        loss2.backward(retain_graph=True)
+        loss2.backward(retain_graph=RETAIN_GRAPH)
         self.optim_critic_2.step()
         return loss, loss2
 
@@ -149,12 +151,12 @@ class SACOffline:
         dones = dones.float()
         return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
 
-    def train(self, x_batch, ep, baseline):
+    def train(self, x_batch, ep):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
         alpha_loss = self.train_alpha(log_action_probs=log_action_probs)
-        loss_actor = self.train_actor(ep, s_currs=s_currs, a_currs=a_currs, sample_action=sample_action,
-                                      log_action_probs=log_action_probs, bc=baseline)
+        loss_actor = self.train_actor(ep=ep, s_currs=s_currs, a_currs=a_currs, sample_action=sample_action,
+                                      log_action_probs=log_action_probs)
         value = self.get_v(state_batch=s_nexts)
         loss, loss2 = self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
 
@@ -169,7 +171,7 @@ class SACOffline:
             target_param.data.copy_(self.Tau * local_param.data + (1.0 - self.Tau) * target_param.data)
 
 
-def main(episodes, exp_name, offline, overfit, baseline):
+def main(episodes, exp_name, overfit):
     logdir = os.path.join("logs", exp_name)
     os.makedirs(logdir, exist_ok=True)
     writer = SummaryWriter(logdir)
@@ -188,7 +190,7 @@ def main(episodes, exp_name, offline, overfit, baseline):
         sample.s_next = torch.from_numpy(data[..., 11:19])
         sample.done = torch.from_numpy(data[..., [19]])
 
-        losses = agent.train(sample, ep, baseline)
+        losses = agent.train(sample, ep)
 
         if overfit:
             print("OVERFITTING: MAKING SAME ENVIRONMENT")
@@ -205,7 +207,8 @@ def main(episodes, exp_name, offline, overfit, baseline):
         if ep % 100 == 0:
             while not done:
                 if ep % 500 == 0:  # sneak peek
-                    env.render()
+                    # env.render()
+                    pass
                 s_curr_tensor = torch.from_numpy(s_curr)
                 a_curr_tensor, _ = agent.actor.get_action(s_curr_tensor.to(DEVICE), train=True)
                 # this detach is necessary as the action tensor gets concatenated with state tensor when passed in to critic
@@ -214,11 +217,7 @@ def main(episodes, exp_name, offline, overfit, baseline):
                 a_curr_tensor = a_curr_tensor.detach()
                 a_curr = a_curr_tensor.cpu().numpy().flatten()
 
-                if offline:
-                    s_next, r, done, _ = env.step(a_curr)
-                else:
-                    s_next, r, done, _ = env.step(a_curr)
-                # env.render()
+                s_next, r, done, _ = env.step(a_curr)
                 s_next = np.reshape(s_next, (1, n_states))
                 s_next_tensor = torch.from_numpy(s_next)
                 sample = namedtuple('sample', ['s_curr', 'a_curr', 'reward', 's_next', 'done'])
@@ -238,26 +237,22 @@ def main(episodes, exp_name, offline, overfit, baseline):
                 if done:
                     print("ep:{}:################Goal Reached################### {}".format(ep, score))
             env.close()
-        if ep % 100 == 0:
             writer.add_scalar("score", score, ep)
-            writer.add_scalars('training loss', {'loss': losses[0],
-                                                 'loss2': losses[1],
-                                                 'loss_actor': losses[2],
-                                                 'alpha_loss': losses[3]}, ep)
+            writer.add_scalars('loss', {'loss': losses[0],
+                                        'loss2': losses[1],
+                                        'loss_actor': losses[2],
+                                        'alpha_loss': losses[3]}, ep)
     writer.close()
     return agent
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exp_name", type=str, default="sac_offline_bc", help="exp_name")
+    ap.add_argument("--exp_name", type=str, default="sac_offline_bc_retain_graph_false", help="exp_name")
     ap.add_argument("--episodes", type=int, default=10000, help="number of episodes to run")
-    ap.add_argument("--offline", action="store_true", help="number of episodes to run")
     ap.add_argument("--overfit", action="store_true", help="number of episodes to run")
-    ap.add_argument("--bc", action="store_true", help="run bc baseline")
     args = vars(ap.parse_args())
-    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"],
-                         overfit=args["overfit"], baseline=args["bc"])
+    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], overfit=args["overfit"])
 
     if DEVICE == torch.device('cpu'):
         torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_cpu.pt")
