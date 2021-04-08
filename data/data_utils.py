@@ -9,19 +9,20 @@ import pandas as pd
 import torch
 from torch.utils.data import WeightedRandomSampler
 
+sys.path.append(os.path.abspath(os.path.join('..')))
 from config import Config as cfg
 
-sys.path.append(os.path.abspath(os.path.join('..')))
 
-
-def rollout_viz(env, data, render=False, seed=None):
+def rollout_viz(env, data, render=False, seed=None, overfit=False):
     """Visualize previously saved rollouts in the gym env"""
 
     total_reward = 0
     steps = 0
     s = env.reset()
-    # env.actionspace.seed(seed)
-    N = data.shape[0]
+    if overfit:
+        env.seed(seed)
+        env.action_space.seed(seed)
+    N = len(data)
     for i in range(N):
         s = data[i][:8]
         a = data[i][8:10]
@@ -41,7 +42,7 @@ def rollout_viz(env, data, render=False, seed=None):
             print("observations:", " ".join(["{:+0.2f}".format(x) for x in s]))
             print("step {} total_reward {:+0.2f}".format(steps, total_reward))
         steps += 1
-        if done: break
+    env.close()
     return total_reward
 
 
@@ -80,20 +81,20 @@ def get_weighted_sampler(ratio, normalize=False):
         weights[weights == ratio[1]] /= (rollout_count["subopt"])
 
     # NOTE: sampled with replacement by default
-    sampler = WeightedRandomSampler(weights, len(weights), replacement=False)
+    sampler = WeightedRandomSampler(weights, len(weights), replacement=True)
     return df, sampler, weights
 
 
 if __name__ == '__main__':
-    # Load rollouts from disk
+    # Example: Load rollouts from disk
     data_dir = os.path.join('LunarLanderData')
-    filename = 'LunarLanderContinuous-v2_none_30.csv'
-    seed = int(filename.split('.')[0][-2:])
+    filename = 'LunarLanderContinuous-v2_none_0.csv'
+    seed = 0
     rollout_name = os.path.join(data_dir, filename)
 
     # Rollout tuple:
     # <s0,..,s7,a0,a1,r,s'1,...,s'7,done,episode>
-    rollout = pd.read_csv(rollout_name, header=0).to_numpy()  # shape: (N x 21)
+    rollout = pd.read_csv(rollout_name, header=0).to_numpy()  # shape: (N x 22)
 
     # Fixing seeds for reproducible behaviour
     env = gym.make('LunarLanderContinuous-v2')
@@ -101,5 +102,6 @@ if __name__ == '__main__':
     env.action_space.seed(seed)
     np.random.seed(seed)
     random.seed(seed)
-
-    rollout_viz(env, rollout, seed=int(seed), render=True)
+    for e in range(10):
+        score = rollout_viz(env, rollout[rollout[:, 20]==e], seed=int(seed), render=True, overfit=True)
+        print("EPISODE {}: SCORE: {}".format(e, score))
