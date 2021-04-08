@@ -13,8 +13,8 @@ from data.data_utils import get_weighted_sampler
 # DATALOADER
 class OfflineDataset(Dataset):
 
-    def __init__(self, dataframe, training=True, transform=None):
-        self.data = torch.Tensor(dataframe.to_numpy())
+    def __init__(self, data, training=True, transform=None):
+        self.data = torch.Tensor(data)
 
         # Load <s,a,r,s',done,episode>
         self.current_states = self.data[:, :8]

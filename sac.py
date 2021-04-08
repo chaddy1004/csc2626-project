@@ -205,8 +205,8 @@ def main(episodes, exp_name, offline):
                                         'loss2': losses[1].item(),
                                         'loss_actor': losses[2].item(),
                                         'alpha_loss': losses[3].item()},
-                                    ep)
-    writer.close()
+    
+                                       writer.close()
     return agent
 
 
