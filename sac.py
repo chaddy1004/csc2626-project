@@ -5,9 +5,9 @@ from collections import namedtuple, deque
 
 import gym
 import numpy as np
-import tensorflow as tf
 import torch
 from torch.optim import Adam
+from torch.utils.tensorboard import SummaryWriter
 
 from ExpertPolicy.network import Actor, Critic
 
@@ -67,10 +67,10 @@ class SAC:
 
     def get_v(self, state_batch):
         action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
-        q_values = self.target_critic(state_batch, action_batch).detach()  # (batch, 1)
-        q_values_2 = self.target_critic2(state_batch, action_batch).detach()
+        q_values = self.target_critic(state_batch, action_batch)  # (batch, 1)
+        q_values_2 = self.target_critic2(state_batch, action_batch)
         value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs
-        return value.detach()
+        return value
 
     def train_actor(self, s_currs, sample_action, log_action_probs):
         q_values_new = self.critic(s_currs, sample_action)
@@ -81,7 +81,7 @@ class SAC:
         self.optim_actor.zero_grad()
         loss_actor.backward()
         self.optim_actor.step()
-        return
+        return loss_actor
 
     def train_alpha(self, log_action_probs):
         alpha_loss = torch.mean((-1 * torch.exp(self.log_alpha)) * (log_action_probs.detach() + self.H))
@@ -89,23 +89,23 @@ class SAC:
         alpha_loss.backward()
         self.optim_alpha.step()
         self.alpha = torch.exp(self.log_alpha)
-        return
+        return alpha_loss
 
     def train_critic(self, value, s_currs, a_currs, r, dones):
         predicts = self.critic(s_currs, a_currs)  # (batch, actions)
         predicts2 = self.critic2(s_currs, a_currs)
         target = r + ((1 - dones) * self.gamma * value)
 
-        loss = mse_loss_function(predicts, target)
+        loss = mse_loss_function(predicts, target.detach())
         self.optim_critic.zero_grad()
         loss.backward()
         self.optim_critic.step()
 
-        loss2 = mse_loss_function(predicts2, target)
+        loss2 = mse_loss_function(predicts2, target.detach())
         self.optim_critic_2.zero_grad()
         loss2.backward()
         self.optim_critic_2.step()
-        return
+        return loss, loss2
 
     def process_batch(self, x_batch):
         s_currs = torch.zeros((self.batch_size, self.n_states))
@@ -125,13 +125,13 @@ class SAC:
 
     def train(self, x_batch):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
-        value = self.get_v(state_batch=s_nexts)
-        self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
-        self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
-        self.train_alpha(log_action_probs=log_action_probs)
+        alpha_loss = self.train_alpha(log_action_probs=log_action_probs)
+        loss_actor = self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
+        value = self.get_v(state_batch=s_nexts)
+        loss, loss2 = self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
         self.update_weights()
-        return
+        return loss, loss2, loss_actor, alpha_loss
 
     def update_weights(self):
         for target_param, local_param in zip(self.target_critic.parameters(), self.critic.parameters()):
@@ -144,7 +144,7 @@ class SAC:
 def main(episodes, exp_name, offline):
     logdir = os.path.join("logs", exp_name)
     os.makedirs(logdir, exist_ok=True)
-    writer = tf.summary.create_file_writer(logdir)
+    writer = SummaryWriter(logdir)
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
@@ -192,16 +192,21 @@ def main(episodes, exp_name, offline):
                 agent.experience_replay.append(sample)
                 if ep > exploration_eps:
                     x_batch = random.sample(agent.experience_replay, agent.batch_size)
-                    agent.train(x_batch)
+                    losses = agent.train(x_batch)
 
             s_curr = s_next
             score += r
             step += 1
             if done:
                 print(f"ep:{ep}:################Goal Reached###################", score)
-                with writer.as_default():
-                    tf.summary.scalar("reward", r, ep)
-                    tf.summary.scalar("score", score, ep)
+                if ep > 0:
+                    writer.add_scalar("score", score, ep)
+                    writer.add_scalars('training loss', {'loss': losses[0].item(),
+                                        'loss2': losses[1].item(),
+                                        'loss_actor': losses[2].item(),
+                                        'alpha_loss': losses[3].item()},
+                                    ep)
+    writer.close()
     return agent
 
 
