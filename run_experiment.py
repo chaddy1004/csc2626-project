@@ -99,7 +99,7 @@ def main(episodes, exp_name, agent_type, num_trials):
                 sample.s_next = s_next_tensor
                 sample.done = done
 
-                agent.train(sample)
+                agent.train(sample, ep)
 
                 # testing on environment
                 s_curr = env.reset()
@@ -153,7 +153,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--exp_name", type=str, default="experiment_bc", help="exp_name")
     ap.add_argument("--episodes", type=int, default=300, help="number of episodes to run")
-    ap.add_argument("--agent_type", type=str, default="BC", help="type of agent to test")
+    ap.add_argument("--agent_type", type=str, default="SACOffline", help="type of agent to test")
     ap.add_argument("--num_trials", type=int, default=2, help="number of trials to average over")
     args = vars(ap.parse_args())
     trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], agent_type=args["agent_type"],

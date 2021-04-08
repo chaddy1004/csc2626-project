@@ -105,7 +105,7 @@ class BC:
         dones = dones.float()
         return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
 
-    def train(self, x_batch):
+    def train(self, x_batch, ep):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
         alpha_loss = self.train_alpha(log_action_probs=log_action_probs)
