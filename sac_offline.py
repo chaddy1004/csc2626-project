@@ -5,18 +5,20 @@ from collections import namedtuple, deque
 
 import gym
 import numpy as np
-import tensorflow as tf
 import torch
 from torch.optim import Adam
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader, Dataset
 
 from ExpertPolicy.network import Actor, Critic
 from config import Config as cfg
 from data.data_utils import get_weighted_sampler
+from data.dataloader import OfflineDataset
 from memory.replay_buffer import Memory
 
-torch.manual_seed(19971124)
-np.random.seed(42)
-random.seed(101)
+torch.manual_seed(0)
+np.random.seed(0)
+random.seed(0)
 
 mse_loss_function = torch.nn.MSELoss()
 
@@ -31,10 +33,10 @@ else:
 
 
 class SACOffline:
-    def __init__(self, n_states, n_actions):
+    def __init__(self, n_states, n_actions, ratio):
         # Test
-        ratio = (1.0, 0.0)
-        rollouts_df, weighted_sampler, weights = get_weighted_sampler(ratio, normalize=True)
+        self.ratio = ratio
+        rollouts_df, weighted_sampler, weights = get_weighted_sampler(self.ratio, normalize=True)
         rollouts = rollouts_df.to_numpy()
 
         # NOTE: For now, set capacity to length of demo data since should only sample once full
@@ -46,7 +48,6 @@ class SACOffline:
 
         # Adding demo data tuples to memory
         for t in rollouts:
-            # print(t)
             replay_memory.store(t)
 
         # Sampling replay memory
@@ -65,6 +66,8 @@ class SACOffline:
         self.gamma = 0.99
         self.H = -2
         self.Tau = 0.01
+        self.reward_scale = 1
+        self.policy_eval_start = 0
 
         # actor network
         self.actor = Actor(n_states=n_states, n_actions=n_actions).to(DEVICE)
@@ -91,21 +94,51 @@ class SACOffline:
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
         self.optim_critic_2 = Adam(params=self.critic2.parameters(), lr=self.lr)
 
-    def get_v(self, state_batch, action, log_action_probs):
-        # TODO: move code from main train() function
-        return
+    def get_v(self, state_batch):
+        action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
+        q_values = self.target_critic(state_batch, action_batch)  # (batch, 1)
+        q_values_2 = self.target_critic2(state_batch, action_batch)
+        value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs
+        return value
 
-    def train_actor(self, s_currs):
-        # TODO: move code from main train() function
-        return
+    def train_actor(self, ep, s_currs, a_currs, sample_action, log_action_probs, bc):
+        if bc or ep < self.policy_eval_start:
+            # Run behaviour cloning as a baseline or as a kickstarter
+            policy_log_prob = self.actor.log_prob(s_currs, a_currs)
+            loss_actor = torch.mean(self.alpha * log_action_probs - policy_log_prob)
+        else:
+            q_values_new = self.critic(s_currs, sample_action)
+            q_values_new_2 = self.critic2(s_currs, sample_action)
+            loss_actor = torch.mean(log_action_probs - torch.min(q_values_new, q_values_new_2))
 
-    def train_alpha(self, s_currs, log_action_probs):
-        # TODO: move code from main train() function
-        return
+        self.optim_actor.zero_grad()
+        loss_actor.backward(retain_graph=True)
+        self.optim_actor.step()
+        return loss_actor
 
-    def train_critic(self, s_currs, a_currs, r, s_nexts, dones, a_nexts, log_action_probs_next):
-        # TODO: move code from main train() function
-        return
+    def train_alpha(self, log_action_probs):
+        alpha_loss = torch.mean((-1 * self.log_alpha) * (log_action_probs + self.H).detach())
+        self.optim_alpha.zero_grad()
+        alpha_loss.backward(retain_graph=True)
+        self.optim_alpha.step()
+        self.alpha = torch.exp(self.log_alpha)
+        return alpha_loss
+
+    def train_critic(self, value, s_currs, a_currs, r, dones):
+        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
+        predicts2 = self.critic2(s_currs, a_currs)
+        target = r / self.reward_scale + ((1 - dones) * self.gamma * value)
+
+        loss = mse_loss_function(predicts, target.detach())
+        self.optim_critic.zero_grad()
+        loss.backward(retain_graph=True)
+        self.optim_critic.step()
+
+        loss2 = mse_loss_function(predicts2, target.detach())
+        self.optim_critic_2.zero_grad()
+        loss2.backward(retain_graph=True)
+        self.optim_critic_2.step()
+        return loss, loss2
 
     def process_batch(self, x_batch):
         s_currs = x_batch.s_curr
@@ -116,46 +149,16 @@ class SACOffline:
         dones = dones.float()
         return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
 
-    def train(self, x_batch):
+    def train(self, x_batch, ep, baseline):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
-
-        a_nexts, log_action_probs_next = self.actor.get_action(s_nexts, train=True)
-
-        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
-        predicts2 = self.critic2(s_currs, a_currs)
-
-        q_values = self.target_critic(s_nexts, a_nexts).detach()  # (batch, 1)
-        q_values_2 = self.target_critic2(s_nexts, a_nexts).detach()
-        value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs_next
-
-        target = r + ((1 - dones) * self.gamma * value.detach())
-        loss = mse_loss_function(predicts, target)
-        self.optim_critic.zero_grad()
-        loss.backward()
-        self.optim_critic.step()
-
-        loss2 = mse_loss_function(predicts2, target)
-        self.optim_critic_2.zero_grad()
-        loss2.backward()
-        self.optim_critic_2.step()
-
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
-        q_values_new = self.critic(s_currs, sample_action)
-        q_values_new_2 = self.critic2(s_currs, sample_action)
-        loss_actor = (self.alpha * log_action_probs) - torch.min(q_values_new, q_values_new_2)
-
-        loss_actor = torch.mean(loss_actor)
-        self.optim_actor.zero_grad()
-        loss_actor.backward()
-        self.optim_actor.step()
-
-        alpha_loss = torch.mean((-1 * torch.exp(self.log_alpha)) * (log_action_probs.detach() + self.H))
-        self.optim_alpha.zero_grad()
-        alpha_loss.backward()
-        self.optim_alpha.step()
-        self.alpha = torch.exp(self.log_alpha)
+        alpha_loss = self.train_alpha(log_action_probs=log_action_probs)
+        loss_actor = self.train_actor(ep, s_currs=s_currs, a_currs=a_currs, sample_action=sample_action,
+                                    log_action_probs=log_action_probs, bc=baseline)
+        value = self.get_v(state_batch=s_nexts)
+        loss, loss2 = self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
         self.update_weights()
-        return
+        return loss, loss2, loss_actor, alpha_loss
 
     def update_weights(self):
         for target_param, local_param in zip(self.target_critic.parameters(), self.critic.parameters()):
@@ -165,32 +168,31 @@ class SACOffline:
             target_param.data.copy_(self.Tau * local_param.data + (1.0 - self.Tau) * target_param.data)
 
 
-def main(episodes, exp_name, offline):
+def main(episodes, exp_name, offline, overfit, baseline):
     logdir = os.path.join("logs", exp_name)
     os.makedirs(logdir, exist_ok=True)
-    writer = tf.summary.create_file_writer(logdir)
+    writer = SummaryWriter(logdir)
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
-    agent = SACOffline(n_states=n_states, n_actions=n_actions)
+    agent = SACOffline(n_states=n_states, n_actions=n_actions, ratio=(1.0, 0.0))
     for ep in range(episodes):
         _, data, _ = agent.experience_replay.sample(agent.batch_size)
 
         sample = namedtuple('sample', ['s_curr', 'a_curr', 'reward', 's_next', 'done'])
 
-        s_curr_tensor = torch.from_numpy(data[..., :8])
-        a_curr_tensor = torch.from_numpy(data[..., 8:10])
-        r = torch.from_numpy(data[..., [10]])
-        s_next_tensor = torch.from_numpy(data[..., 11:19])
-        done = torch.from_numpy(data[..., [19]])
+        sample.s_curr = torch.from_numpy(data[..., :8])
+        sample.a_curr = torch.from_numpy(data[..., 8:10])
+        sample.reward = torch.from_numpy(data[..., [10]])
+        sample.s_next = torch.from_numpy(data[..., 11:19])
+        sample.done = torch.from_numpy(data[..., [19]])
 
-        sample.s_curr = s_curr_tensor
-        sample.a_curr = a_curr_tensor
-        sample.reward = r
-        sample.s_next = s_next_tensor
-        sample.done = done
+        losses = agent.train(sample, ep, baseline)
 
-        agent.train(sample)
+        if overfit:
+            print("OVERFITTING: MAKING SAME ENVIRONMENT")
+            env.seed(0)
+            env.action_space.seed(0)
 
         s_curr = env.reset()
         s_curr = np.reshape(s_curr, (1, n_states))
@@ -198,54 +200,65 @@ def main(episodes, exp_name, offline):
         done = False
         score = 0
         step = 0
-
         # run an episode to see how well it does
-        while not done:
-            s_curr_tensor = torch.from_numpy(s_curr)
-            a_curr_tensor, _ = agent.actor.get_action(s_curr_tensor.to(DEVICE), train=True)
-            # this detach is necessary as the action tensor gets concatenated with state tensor when passed in to critic
-            # without this detach, each action tensor keeps its graph, and when same action gets sampled from buffer,
-            # it considers that graph "already processed" so it will throw an error
-            a_curr_tensor = a_curr_tensor.detach()
-            a_curr = a_curr_tensor.cpu().numpy().flatten()
+        if ep % 100 == 0:
+            while not done:
+                if ep % 500 == 0: # sneak peek
+                    env.render()
+                s_curr_tensor = torch.from_numpy(s_curr)
+                a_curr_tensor, _ = agent.actor.get_action(s_curr_tensor.to(DEVICE), train=True)
+                # this detach is necessary as the action tensor gets concatenated with state tensor when passed in to critic
+                # without this detach, each action tensor keeps its graph, and when same action gets sampled from buffer,
+                # it considers that graph "already processed" so it will throw an error
+                a_curr_tensor = a_curr_tensor.detach()
+                a_curr = a_curr_tensor.cpu().numpy().flatten()
 
-            if offline:
-                s_next, r, done, _ = env.step(a_curr)
-            else:
-                s_next, r, done, _ = env.step(a_curr)
+                if offline:
+                    s_next, r, done, _ = env.step(a_curr)
+                else:
+                    s_next, r, done, _ = env.step(a_curr)
+                # env.render()
+                s_next = np.reshape(s_next, (1, n_states))
+                s_next_tensor = torch.from_numpy(s_next)
+                sample = namedtuple('sample', ['s_curr', 'a_curr', 'reward', 's_next', 'done'])
+                if step == 500:
+                    print("RAN FOR TOO LONG")
+                    done = True
 
-            s_next = np.reshape(s_next, (1, n_states))
-            s_next_tensor = torch.from_numpy(s_next)
-            sample = namedtuple('sample', ['s_curr', 'a_curr', 'reward', 's_next', 'done'])
-            if step == 500:
-                print("RAN FOR TOO LONG")
-                done = True
+                sample.s_curr = s_curr_tensor
+                sample.a_curr = a_curr_tensor
+                sample.reward = r
+                sample.s_next = s_next_tensor
+                sample.done = done
 
-            sample.s_curr = s_curr_tensor
-            sample.a_curr = a_curr_tensor
-            sample.reward = r
-            sample.s_next = s_next_tensor
-            sample.done = done
-
-            s_curr = s_next
-            score += r
-            step += 1
-            if done:
-                print(f"ep:{ep}:################Goal Reached###################", score)
-                with writer.as_default():
-                    tf.summary.scalar("reward", r, ep)
-                    tf.summary.scalar("score", score, ep)
+                s_curr = s_next
+                score += r
+                step += 1
+                if done:
+                    print("ep:{}:################Goal Reached################### {}".format(ep, score))
+            env.close()
+        if ep % 100 == 0:
+            writer.add_scalar("score", score, ep)
+            writer.add_scalars('training loss', {'loss': losses[0],
+                                                'loss2': losses[1],
+                                                'loss_actor': losses[2],
+                                                'alpha_loss': losses[3]},
+                                                ep)
+    writer.close()
     return agent
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exp_name", type=str, default="sac_offline", help="exp_name")
-    ap.add_argument("--episodes", type=int, default=700, help="number of episodes to run")
+    ap.add_argument("--exp_name", type=str, default="sac_offline_bc", help="exp_name")
+    ap.add_argument("--episodes", type=int, default=10000, help="number of episodes to run")
     ap.add_argument("--offline", action="store_true", help="number of episodes to run")
+    ap.add_argument("--overfit", action="store_true", help="number of episodes to run")
+    ap.add_argument("--bc", action="store_true", help="run bc baseline")
     args = vars(ap.parse_args())
-    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"])
+    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"],
+                         overfit=args["overfit"], baseline=args["bc"])
     if DEVICE == torch.device('cpu'):
-        torch.save(trained_agent.actor, "policy_trained_on_cpu.pt")
+        torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_cpu.pt")
     else:
-        torch.save(trained_agent.actor, "policy_trained_on_gpu.pt")
+        torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_gpu.pt")
