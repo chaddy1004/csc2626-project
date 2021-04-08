@@ -1,21 +1,21 @@
 import argparse
 import os
 import random
-from collections import namedtuple, deque
+from collections import namedtuple
 
 import gym
 import numpy as np
+import pandas as pd
+import seaborn as sns
 import torch
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader, Dataset
 
-from ExpertPolicy.network import Actor, Critic
-from config import Config as cfg
+from ExpertPolicy.network import Actor
 from data.data_utils import get_weighted_sampler
-from data.dataloader import OfflineDataset
 from memory.replay_buffer import Memory
 
+sns.set_theme(style="darkgrid")
 torch.manual_seed(0)
 np.random.seed(0)
 random.seed(0)
@@ -77,6 +77,8 @@ class BC:
         self.alpha = 0.2
 
         self.optim_actor = Adam(params=self.actor.parameters(), lr=self.lr)
+
+        self.test_scores = []
 
     def train_actor(self, s_currs, a_currs, log_action_probs):
         policy_log_prob = self.actor.log_prob(s_currs, a_currs)

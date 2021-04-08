@@ -1,0 +1,1 @@
+python run_experiment.py --episodes 1000 --agent_type BC --num_trials 5

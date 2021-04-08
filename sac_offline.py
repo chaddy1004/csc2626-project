@@ -1,19 +1,17 @@
 import argparse
 import os
 import random
-from collections import namedtuple, deque
+from collections import namedtuple
 
 import gym
 import numpy as np
+import pandas as pd
 import torch
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader, Dataset
 
 from ExpertPolicy.network import Actor, Critic
-from config import Config as cfg
 from data.data_utils import get_weighted_sampler
-from data.dataloader import OfflineDataset
 from memory.replay_buffer import Memory
 
 torch.manual_seed(0)
@@ -95,6 +93,8 @@ class SACOffline:
         self.optim_actor = Adam(params=self.actor.parameters(), lr=self.lr)
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
         self.optim_critic_2 = Adam(params=self.critic2.parameters(), lr=self.lr)
+
+        self.test_scores = []
 
     def get_v(self, state_batch):
         action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
