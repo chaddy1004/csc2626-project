@@ -5,9 +5,9 @@ from collections import namedtuple, deque
 
 import gym
 import numpy as np
-import tensorflow as tf
 import torch
 from torch.optim import Adam
+from torch.utils.tensorboard import SummaryWriter
 
 from ExpertPolicy.network import Actor, Critic
 
@@ -136,7 +136,7 @@ class SAC:
         self.optim_alpha.step()
         self.alpha = torch.exp(self.log_alpha)
         self.update_weights()
-        return
+        return loss, loss2, loss_actor, alpha_loss
 
     def update_weights(self):
         for target_param, local_param in zip(self.target_critic.parameters(), self.critic.parameters()):
@@ -149,7 +149,7 @@ class SAC:
 def main(episodes, exp_name, offline):
     logdir = os.path.join("logs", exp_name)
     os.makedirs(logdir, exist_ok=True)
-    writer = tf.summary.create_file_writer(logdir)
+    writer = SummaryWriter(logdir)
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
@@ -197,16 +197,24 @@ def main(episodes, exp_name, offline):
                 agent.experience_replay.append(sample)
                 if ep > exploration_eps:
                     x_batch = random.sample(agent.experience_replay, agent.batch_size)
-                    agent.train(x_batch)
+                    losses = agent.train(x_batch)
 
             s_curr = s_next
             score += r
             step += 1
             if done:
-                print(f"ep:{ep}:################Goal Reached###################", score)
-                with writer.as_default():
-                    tf.summary.scalar("reward", r, ep)
-                    tf.summary.scalar("score", score, ep)
+                print("ep:{}:################Goal Reached###################{}".format(ep, score))
+                if ep > 0:
+                    writer.add_scalar("score", np.mean(score), ep)
+                    writer.add_scalars('training loss', {'loss': losses[0].item(),
+                                        'loss2': losses[1].item(),
+                                        'loss_actor': losses[2].item(),
+                                        'alpha_loss': losses[3].item()},
+                                        ep)
+                # writer.add_scalar("reward", r, ep)
+                # writer.add_scalar("score", score, ep)
+                
+    writer.close()
     return agent
 
 
