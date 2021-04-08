@@ -2,9 +2,8 @@ import random
 
 import numpy as np
 import torch
-from torch.nn import Module, Linear, ReLU, Sequential, init
-
 from torch.distributions import Normal
+from torch.nn import Module, Linear, ReLU, Sequential
 
 torch.manual_seed(19971124)
 np.random.seed(42)
@@ -38,6 +37,16 @@ class Actor(Module):
         logstd = self.logstd(x)
         logstd = torch.clamp(logstd, -20, 2)
         return mu, logstd
+
+    def log_prob(self, state, actions):
+        one_plus_x = (1 + actions).clamp(min=1e-6)
+        one_minus_x = (1 - actions).clamp(min=1e-6)
+        raw_actions = 0.5*torch.log(one_plus_x/ one_minus_x)
+        mean, logstd = self.forward(state)  # (batch, n_actions*2)
+        std = logstd.exp()
+        dist = Normal(mean, std)
+        log_prob = dist.log_prob(raw_actions) - torch.log(1 - actions * actions + 1e-6)
+        return log_prob.sum(-1)
 
     def get_action(self, state, train):
         mean, logstd = self.forward(state)  # (batch, n_actions*2)

@@ -5,11 +5,14 @@ from collections import namedtuple, deque
 
 import gym
 import numpy as np
+import tensorflow as tf
 import torch
 from torch.optim import Adam
-from torch.utils.tensorboard import SummaryWriter
 
 from ExpertPolicy.network import Actor, Critic
+from config import Config as cfg
+from data.data_utils import get_weighted_sampler
+from memory.replay_buffer import Memory
 
 torch.manual_seed(19971124)
 np.random.seed(42)
@@ -27,11 +30,34 @@ else:
     DEVICE = torch.device('cpu')
 
 
-class SAC:
-    def __init__(self, n_states, n_actions):
+class CQLSAC:
+    def __init__(self, n_states, n_actions, ratio):
+        # Test
+        self.ratio = ratio
+        rollouts_df, weighted_sampler, weights = get_weighted_sampler(self.ratio, normalize=True)
+        rollouts = rollouts_df.to_numpy()
+
+        # NOTE: For now, set capacity to length of demo data since should only sample once full
+        # although will probably need to reduce size of demo data and increase capacity in the future
+        capacity = len(rollouts)
+
+        # If offline: provide weights based on ratio of optimal to suboptimal data
+        replay_memory = Memory(capacity=capacity, permanent_data=len(rollouts), weights=weights, offline=True)
+
+        # Adding demo data tuples to memory
+        for t in rollouts:
+            # print(t)
+            replay_memory.store(t)
+
+        # Sampling replay memory
+        # batch size --> n: number of <s,a,r,s',done,type> sampled from the tree
+        # tree_indices: needed (needed only online) to update the tree after each training iteration
+        # importance_sampling_weights (needed only online): will be all 1s for now because only demo data in buffer
+        # tree_indices, minibatch, importance_sampling_weights = replay_memory.sample(cfg.BS)
         # hyper parameters
+
         self.replay_size = 1000000
-        self.experience_replay = deque(maxlen=self.replay_size)
+        self.experience_replay = replay_memory
         self.n_actions = n_actions
         self.n_states = n_states
         self.lr = 0.0003
@@ -67,10 +93,10 @@ class SAC:
 
     def get_v(self, state_batch):
         action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
-        q_values = self.target_critic(state_batch, action_batch)  # (batch, 1)
-        q_values_2 = self.target_critic2(state_batch, action_batch)
+        q_values = self.target_critic(state_batch, action_batch).detach()  # (batch, 1)
+        q_values_2 = self.target_critic2(state_batch, action_batch).detach()
         value = torch.min(q_values, q_values_2) - self.alpha * log_action_probs
-        return value
+        return value.detach()
 
     def train_actor(self, s_currs, sample_action, log_action_probs):
         q_values_new = self.critic(s_currs, sample_action)
@@ -81,7 +107,7 @@ class SAC:
         self.optim_actor.zero_grad()
         loss_actor.backward()
         self.optim_actor.step()
-        return loss_actor
+        return
 
     def train_alpha(self, log_action_probs):
         alpha_loss = torch.mean((-1 * torch.exp(self.log_alpha)) * (log_action_probs.detach() + self.H))
@@ -89,49 +115,54 @@ class SAC:
         alpha_loss.backward()
         self.optim_alpha.step()
         self.alpha = torch.exp(self.log_alpha)
-        return alpha_loss
+        return
 
     def train_critic(self, value, s_currs, a_currs, r, dones):
-        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
-        predicts2 = self.critic2(s_currs, a_currs)
+        predicts_1 = self.critic(s_currs, a_currs)  # (batch, actions)
+        predicts_2 = self.critic2(s_currs, a_currs)
         target = r + ((1 - dones) * self.gamma * value)
 
-        loss = mse_loss_function(predicts, target.detach())
+        # CQL
+        loss_cql_1 = None
+        loss_cql_2 = None
+
+        loss_rl_1 = mse_loss_function(predicts_1, target)
+
+        loss_rl_2 = mse_loss_function(predicts_2, target)
+        self.optim_critic_2.zero_grad()
+        self.optim_critic_2.step()
+
+        loss_1 = loss_cql_1 + loss_rl_1
+        loss_2 = loss_cql_2 + loss_rl_2
+
+        loss_1.backward()
         self.optim_critic.zero_grad()
-        loss.backward()
         self.optim_critic.step()
 
-        loss2 = mse_loss_function(predicts2, target.detach())
+        loss_2.backward()
         self.optim_critic_2.zero_grad()
-        loss2.backward()
         self.optim_critic_2.step()
-        return loss, loss2
+
+        return
 
     def process_batch(self, x_batch):
-        s_currs = torch.zeros((self.batch_size, self.n_states))
-        a_currs = torch.zeros((self.batch_size, self.n_actions))
-        r = torch.zeros((self.batch_size, 1))
-        s_nexts = torch.zeros((self.batch_size, self.n_states))
-        dones = torch.zeros((self.batch_size, 1))
-
-        for batch in range(self.batch_size):
-            s_currs[batch] = x_batch[batch].s_curr
-            a_currs[batch] = x_batch[batch].a_curr
-            r[batch] = x_batch[batch].reward
-            s_nexts[batch] = x_batch[batch].s_next
-            dones[batch] = x_batch[batch].done
+        s_currs = x_batch.s_curr
+        a_currs = x_batch.a_curr
+        r = x_batch.reward
+        s_nexts = x_batch.s_next
+        dones = x_batch.done
         dones = dones.float()
         return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
 
     def train(self, x_batch):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
-        sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
-        alpha_loss = self.train_alpha(log_action_probs=log_action_probs)
-        loss_actor = self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
         value = self.get_v(state_batch=s_nexts)
-        loss, loss2 = self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
+        self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
+        sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
+        self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
+        self.train_alpha(log_action_probs=log_action_probs)
         self.update_weights()
-        return loss, loss2, loss_actor, alpha_loss
+        return
 
     def update_weights(self):
         for target_param, local_param in zip(self.target_critic.parameters(), self.critic.parameters()):
@@ -141,22 +172,44 @@ class SAC:
             target_param.data.copy_(self.Tau * local_param.data + (1.0 - self.Tau) * target_param.data)
 
 
-def main(episodes, exp_name, offline):
+def main(episodes, exp_name, offline, overfit):
     logdir = os.path.join("logs", exp_name)
     os.makedirs(logdir, exist_ok=True)
-    writer = SummaryWriter(logdir)
+    writer = tf.summary.create_file_writer(logdir)
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
-    agent = SAC(n_states=n_states, n_actions=n_actions)
-    exploration_eps = -1
+    agent = SACOffline(n_states=n_states, n_actions=n_actions, ratio=(1.0, 0.0))
     for ep in range(episodes):
+        _, data, _ = agent.experience_replay.sample(agent.batch_size)
+
+        sample = namedtuple('sample', ['s_curr', 'a_curr', 'reward', 's_next', 'done'])
+
+        s_curr_tensor = torch.from_numpy(data[..., :8])
+        a_curr_tensor = torch.from_numpy(data[..., 8:10])
+        r = torch.from_numpy(data[..., [10]])
+        s_next_tensor = torch.from_numpy(data[..., 11:19])
+        done = torch.from_numpy(data[..., [19]])
+
+        sample.s_curr = s_curr_tensor
+        sample.a_curr = a_curr_tensor
+        sample.reward = r
+        sample.s_next = s_next_tensor
+        sample.done = done
+
+        agent.train(sample)
+        if overfit:
+            print("OVERFITTING: MAKING SAME ENVIRONMENT")
+            env.seed(0)
+            env.action_space.seed(0)
+
         s_curr = env.reset()
         s_curr = np.reshape(s_curr, (1, n_states))
         s_curr = s_curr.astype(np.float32)
         done = False
         score = 0
         step = 0
+        # run an episode to see how well it does
         while not done:
             s_curr_tensor = torch.from_numpy(s_curr)
             a_curr_tensor, _ = agent.actor.get_action(s_curr_tensor.to(DEVICE), train=True)
@@ -170,14 +223,13 @@ def main(episodes, exp_name, offline):
                 s_next, r, done, _ = env.step(a_curr)
             else:
                 s_next, r, done, _ = env.step(a_curr)
-
+            # env.render()
             s_next = np.reshape(s_next, (1, n_states))
             s_next_tensor = torch.from_numpy(s_next)
             sample = namedtuple('sample', ['s_curr', 'a_curr', 'reward', 's_next', 'done'])
             if step == 500:
                 print("RAN FOR TOO LONG")
                 done = True
-            # must re-make training dataloader since the dataset is now updated with aggregation of new data
 
             sample.s_curr = s_curr_tensor
             sample.a_curr = a_curr_tensor
@@ -185,39 +237,27 @@ def main(episodes, exp_name, offline):
             sample.s_next = s_next_tensor
             sample.done = done
 
-            if len(agent.experience_replay) < agent.batch_size:
-                agent.experience_replay.append(sample)
-                print("appending to buffer....")
-            else:
-                agent.experience_replay.append(sample)
-                if ep > exploration_eps:
-                    x_batch = random.sample(agent.experience_replay, agent.batch_size)
-                    losses = agent.train(x_batch)
-
             s_curr = s_next
             score += r
             step += 1
             if done:
                 print(f"ep:{ep}:################Goal Reached###################", score)
-                if ep > 0:
-                    writer.add_scalar("score", score, ep)
-                    writer.add_scalars('training loss', {'loss': losses[0].item(),
-                                        'loss2': losses[1].item(),
-                                        'loss_actor': losses[2].item(),
-                                        'alpha_loss': losses[3].item()},
-    
-                                       writer.close()
+                with writer.as_default():
+                    tf.summary.scalar("reward", r, ep)
+                    tf.summary.scalar("score", score, ep)
     return agent
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exp_name", type=str, default="SAC_LunarLander_Score", help="exp_name")
-    ap.add_argument("--episodes", type=int, default=700, help="number of episodes to run")
+    ap.add_argument("--exp_name", type=str, default="sac_offline_small_data_10_00", help="exp_name")
+    ap.add_argument("--episodes", type=int, default=1000, help="number of episodes to run")
     ap.add_argument("--offline", action="store_true", help="number of episodes to run")
+    ap.add_argument("--overfit", action="store_true", help="number of episodes to run")
     args = vars(ap.parse_args())
-    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"])
+    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"],
+                         overfit=args["overfit"])
     if DEVICE == torch.device('cpu'):
-        torch.save(trained_agent.actor, "policy_trained_on_cpu.pt")
+        torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_cpu.pt")
     else:
-        torch.save(trained_agent.actor, "policy_trained_on_gpu.pt")
+        torch.save(trained_agent.actor, "policy_trained_offline_10_00_on_gpu.pt")
