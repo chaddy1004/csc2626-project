@@ -202,11 +202,11 @@ def main(episodes, exp_name, offline):
                 if ep > 0:
                     writer.add_scalar("score", score, ep)
                     writer.add_scalars('training loss', {'loss': losses[0].item(),
-                                        'loss2': losses[1].item(),
-                                        'loss_actor': losses[2].item(),
-                                        'alpha_loss': losses[3].item()},
-    
-                                       writer.close()
+                                                         'loss2': losses[1].item(),
+                                                         'loss_actor': losses[2].item(),
+                                                         'alpha_loss': losses[3].item()})
+
+    writer.close()
     return agent
 
 

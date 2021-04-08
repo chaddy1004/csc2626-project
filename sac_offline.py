@@ -154,7 +154,7 @@ class SACOffline:
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
         alpha_loss = self.train_alpha(log_action_probs=log_action_probs)
         loss_actor = self.train_actor(ep, s_currs=s_currs, a_currs=a_currs, sample_action=sample_action,
-                                    log_action_probs=log_action_probs, bc=baseline)
+                                      log_action_probs=log_action_probs, bc=baseline)
         value = self.get_v(state_batch=s_nexts)
         loss, loss2 = self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
 
@@ -204,7 +204,7 @@ def main(episodes, exp_name, offline, overfit, baseline):
         # run an episode to see how well it does
         if ep % 100 == 0:
             while not done:
-                if ep % 500 == 0: # sneak peek
+                if ep % 500 == 0:  # sneak peek
                     env.render()
                 s_curr_tensor = torch.from_numpy(s_curr)
                 a_curr_tensor, _ = agent.actor.get_action(s_curr_tensor.to(DEVICE), train=True)
@@ -241,10 +241,9 @@ def main(episodes, exp_name, offline, overfit, baseline):
         if ep % 100 == 0:
             writer.add_scalar("score", score, ep)
             writer.add_scalars('training loss', {'loss': losses[0],
-                                                'loss2': losses[1],
-                                                'loss_actor': losses[2],
-                                                'alpha_loss': losses[3]},
-                                                ep)
+                                                 'loss2': losses[1],
+                                                 'loss_actor': losses[2],
+                                                 'alpha_loss': losses[3]}, ep)
     writer.close()
     return agent
 
