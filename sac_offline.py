@@ -109,7 +109,7 @@ class SACOffline:
         else:
             q_values_new = self.critic(s_currs, sample_action)
             q_values_new_2 = self.critic2(s_currs, sample_action)
-            loss_actor = torch.mean(log_action_probs - torch.min(q_values_new, q_values_new_2))
+            loss_actor = torch.mean(self.alpha * log_action_probs - torch.min(q_values_new, q_values_new_2))
 
         self.optim_actor.zero_grad()
         loss_actor.backward(retain_graph=True)
