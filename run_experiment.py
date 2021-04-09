@@ -60,8 +60,8 @@ def main(episodes, agent_type, num_trials):
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
     agent = None
-    # EXPERT_DATA_RATIOS = [0.0, 0.3, 0.5, 0.7, 1.0]
-    EXPERT_DATA_RATIOS = [0.0, 1.0]
+    EXPERT_DATA_RATIOS = [0.0, 0.3, 0.5, 0.7, 1.0]
+    # EXPERT_DATA_RATIOS = [0.0, 1.0]
     log_freq = 100
 
     total_episodes = []
