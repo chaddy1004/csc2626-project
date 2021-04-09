@@ -1,16 +1,15 @@
 import argparse
 import os
 import random
-from collections import namedtuple, deque
+from collections import namedtuple
 
 import gym
 import numpy as np
-import tensorflow as tf
+from torch.utils.tensorboard import SummaryWriter
 import torch
 from torch.optim import Adam
 
 from ExpertPolicy.network import Actor, Critic
-from config import Config as cfg
 from data.data_utils import get_weighted_sampler
 from memory.replay_buffer import Memory
 
@@ -358,7 +357,7 @@ class CQLSAC:
 def main(episodes, exp_name, offline, overfit):
     logdir = os.path.join("logs", exp_name)
     os.makedirs(logdir, exist_ok=True)
-    writer = tf.summary.create_file_writer(logdir)
+    writer = SummaryWriter(logdir)
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
@@ -426,9 +425,8 @@ def main(episodes, exp_name, offline, overfit):
             step += 1
             if done:
                 print(f"ep:{ep}:################Goal Reached###################", score)
-                with writer.as_default():
-                    tf.summary.scalar("reward", r, ep)
-                    tf.summary.scalar("score", score, ep)
+                writer.add_scalar("reward", r, ep)
+                writer.add_scalar("score", score, ep)
     return agent
 
 
