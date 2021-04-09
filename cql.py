@@ -79,6 +79,8 @@ class CQLDDPG:
         self.optim_actor = Adam(params=self.actor.parameters(), lr=self.lr)
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
 
+        self.test_scores = []
+
     def train_actor(self, s_currs):
         action, _ = self.actor(s_currs)
         q_values_new = self.critic(s_currs, action)
@@ -148,7 +150,7 @@ class CQLDDPG:
         dones = dones.float()
         return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
 
-    def train(self, x_batch):
+    def train(self, x_batch, ep):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
         self.train_critic(s_currs=s_currs, a_currs=a_currs, r=r, s_nexts=s_nexts, dones=dones)
         self.train_actor(s_currs=s_currs)
@@ -221,6 +223,8 @@ class CQLSAC:
         self.optim_actor = Adam(params=self.actor.parameters(), lr=self.lr)
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
         self.optim_critic_2 = Adam(params=self.critic2.parameters(), lr=self.lr)
+
+        self.test_scores = []
 
     def get_v(self, state_batch):
         action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
@@ -332,7 +336,7 @@ class CQLSAC:
         dones = dones.float()
         return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
 
-    def train(self, x_batch):
+    def train(self, x_batch, ep):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
         self.train_alpha(log_action_probs=log_action_probs)

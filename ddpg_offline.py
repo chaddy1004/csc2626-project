@@ -77,6 +77,8 @@ class DDPGOffline:
         self.optim_actor = Adam(params=self.actor.parameters(), lr=self.lr)
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
 
+        self.test_scores = []
+
     def train_actor(self, s_currs):
         action, _ = self.actor.get_action(s_currs, train=True)
         q_values_new = self.critic(s_currs, action)
