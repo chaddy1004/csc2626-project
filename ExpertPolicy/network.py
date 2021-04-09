@@ -41,7 +41,7 @@ class Actor(Module):
     def log_prob(self, state, actions):
         one_plus_x = (1 + actions).clamp(min=1e-6)
         one_minus_x = (1 - actions).clamp(min=1e-6)
-        raw_actions = 0.5*torch.log(one_plus_x/ one_minus_x)
+        raw_actions = 0.5 * torch.log(one_plus_x / one_minus_x)
         mean, logstd = self.forward(state)  # (batch, n_actions*2)
         std = logstd.exp()
         dist = Normal(mean, std)
@@ -91,3 +91,12 @@ class Critic(Module):
         x = self.lin2(x)
         output = self.final_lin(x)
         return output
+
+    def get_tensor_values(self, state, actions):
+        action_shape = actions.shape[0]
+        state_shape = state.shape[0]
+        num_repeat = int(action_shape / state_shape)
+        state_temp = state.unsqueeze(1).repeat(1, num_repeat, 1).view(state.shape[0] * num_repeat, state.shape[1])
+        preds = self.forward(state_temp, actions)
+        preds = preds.view(state.shape[0], num_repeat, 1)
+        return preds

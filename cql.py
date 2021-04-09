@@ -30,6 +30,138 @@ else:
     DEVICE = torch.device('cpu')
 
 
+class CQLDDPG:
+    def __init__(self, n_states, n_actions, ratio):
+        # Test
+        self.ratio = ratio
+        rollouts_df, weighted_sampler, weights = get_weighted_sampler(self.ratio, normalize=True)
+        rollouts = rollouts_df.to_numpy()
+
+        # NOTE: For now, set capacity to length of demo data since should only sample once full
+        # although will probably need to reduce size of demo data and increase capacity in the future
+        capacity = len(rollouts)
+
+        # If offline: provide weights based on ratio of optimal to suboptimal data
+        replay_memory = Memory(capacity=capacity, permanent_data=len(rollouts), weights=weights, offline=True)
+
+        # Adding demo data tuples to memory
+        for t in rollouts:
+            # print(t)
+            replay_memory.store(t)
+
+        self.replay_size = 1000000
+        self.experience_replay = replay_memory
+        self.n_actions = n_actions
+        self.n_states = n_states
+        self.lr = 0.0003
+        self.batch_size = 128
+        self.gamma = 0.99
+        self.H = -2
+        self.Tau = 0.01
+
+        self.n_random_actions = 10
+        # actor network
+        self.actor = Actor(n_states=n_states, n_actions=n_actions).to(DEVICE)
+
+        # dual critic network, with corresponding targets
+        self.critic = Critic(n_states=n_states, n_actions=n_actions).to(DEVICE)
+        self.target_critic = Critic(n_states=n_states, n_actions=n_actions).to(DEVICE)
+
+        # make the target critics start off same as the main networks
+        for target_param, local_param in zip(self.target_critic.parameters(), self.critic.parameters()):
+            target_param.data.copy_(local_param)
+
+        # temperature variable
+        self.log_alpha = torch.tensor(0.0, device=DEVICE, requires_grad=True)
+        self.optim_alpha = Adam(params=[self.log_alpha], lr=self.lr)
+        self.alpha = 0.2
+
+        self.optim_actor = Adam(params=self.actor.parameters(), lr=self.lr)
+        self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
+
+        self.test_scores = []
+
+    def train_actor(self, s_currs):
+        action, _ = self.actor(s_currs)
+        q_values_new = self.critic(s_currs, action)
+        loss_actor = -torch.mean(q_values_new)
+        self.optim_actor.zero_grad()
+        loss_actor.backward()
+        self.optim_actor.step()
+        return
+
+    def train_critic(self, s_currs, a_currs, r, s_nexts, dones):
+        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
+        a_next, _ = self.actor.get_action(s_nexts, train=True)
+        predict_targ = self.target_critic(s_nexts, a_next.detach())
+        target = r + ((1. - dones) * self.gamma * predict_targ)
+
+        loss_rl = mse_loss_function(predicts, target.detach())
+
+        random_actions = torch.FloatTensor(predicts.shape[0] * self.n_random_actions, a_currs.shape[-1]).uniform_(-1, 1)
+        random_actions = random_actions.to(DEVICE)
+
+        s_currs_temp = s_currs.unsqueeze(1).repeat(1, self.n_random_actions, 1).view(
+            s_currs.shape[0] * self.n_random_actions, s_currs.shape[1])
+        curr_action_tensor, curr_log_action_probs = self.actor.get_action(state=s_currs_temp, train=True)
+        s_nexts_temp = s_nexts.unsqueeze(1).repeat(1, self.n_random_actions, 1).view(
+            s_nexts.shape[0] * self.n_random_actions, s_nexts.shape[1])
+        new_curr_action_tensor, new_log_action_probs = self.actor.get_action(state=s_nexts_temp, train=True)
+
+        rand = self.critic.get_tensor_values(s_currs, random_actions)
+
+        curr_actions = self.critic.get_tensor_values(s_currs, curr_action_tensor.detach())
+
+        next_actions = self.critic.get_tensor_values(s_currs, new_curr_action_tensor.detach())
+
+        # min_q (CQL term #1)
+        # NOTE: assuming min_q_weight (i.e. alpha) is 1
+        random_density_log = np.log(0.5 ** self.n_actions)
+
+        rand_value_1 = rand - random_density_log
+
+        pred_value_1 = curr_actions - curr_log_action_probs.view(s_currs.shape[0], self.n_random_actions, 1).detach()
+
+        pred_value_1_next = next_actions - new_log_action_probs.view(s_nexts.shape[0], self.n_random_actions,
+                                                                     1).detach()
+
+        q1_term_pre_exp = torch.cat([rand_value_1, pred_value_1, pred_value_1_next], 1)
+
+        loss_cql_1 = torch.logsumexp(q1_term_pre_exp, dim=1).mean()
+
+        loss_cql_1 = loss_cql_1 - predicts.mean()
+
+        # Bellman + CQL
+        loss = loss_rl + loss_cql_1
+
+        self.optim_critic.zero_grad()
+        RETAIN_G = False
+        loss.backward(retain_graph=RETAIN_G)
+        self.optim_critic.step()
+
+        return loss
+
+    def process_batch(self, x_batch):
+        s_currs = x_batch.s_curr
+        a_currs = x_batch.a_curr
+        r = x_batch.reward
+        s_nexts = x_batch.s_next
+        dones = x_batch.done
+        dones = dones.float()
+        return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
+
+    def train(self, x_batch, ep):
+        s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
+        self.train_critic(s_currs=s_currs, a_currs=a_currs, r=r, s_nexts=s_nexts, dones=dones)
+        self.train_actor(s_currs=s_currs)
+        self.update_weights()
+        return
+
+    def update_weights(self):
+        for target_param, local_param in zip(self.target_critic.parameters(), self.critic.parameters()):
+            target_param.data.copy_(self.Tau * local_param.data + (1.0 - self.Tau) * target_param.data)
+
+
 class CQLSAC:
     def __init__(self, n_states, n_actions, ratio):
         # Test
@@ -66,6 +198,7 @@ class CQLSAC:
         self.H = -2
         self.Tau = 0.01
 
+        self.n_random_actions = 10
         # actor network
         self.actor = Actor(n_states=n_states, n_actions=n_actions).to(DEVICE)
 
@@ -91,6 +224,8 @@ class CQLSAC:
         self.optim_critic = Adam(params=self.critic.parameters(), lr=self.lr)
         self.optim_critic_2 = Adam(params=self.critic2.parameters(), lr=self.lr)
 
+        self.test_scores = []
+
     def get_v(self, state_batch):
         action_batch, log_action_probs = self.actor.get_action(state_batch, train=True)
         q_values = self.target_critic(state_batch, action_batch).detach()  # (batch, 1)
@@ -114,36 +249,83 @@ class CQLSAC:
         self.optim_alpha.zero_grad()
         alpha_loss.backward()
         self.optim_alpha.step()
-        self.alpha = torch.exp(self.log_alpha)
+        with torch.no_grad():
+            self.alpha = torch.exp(self.log_alpha)
         return
 
-    def train_critic(self, value, s_currs, a_currs, r, dones):
-        predicts_1 = self.critic(s_currs, a_currs)  # (batch, actions)
-        predicts_2 = self.critic2(s_currs, a_currs)
-        target = r + ((1 - dones) * self.gamma * value)
+    def _get_tensor_values(self, obs, actions, network=None):
+        action_shape = actions.shape[0]
+        obs_shape = obs.shape[0]
+        num_repeat = int(action_shape / obs_shape)
+        obs_temp = obs.unsqueeze(1).repeat(1, num_repeat, 1).view(
+            obs.shape[0] * num_repeat, obs.shape[1])
+        preds = network(obs_temp, actions)
+        preds = preds.view(obs.shape[0], num_repeat, 1)
+        return preds
 
-        # CQL
-        loss_cql_1 = None
-        loss_cql_2 = None
+    def train_critic(self, value, s_currs, a_currs, r, s_nexts, dones):
+        predicts = self.critic(s_currs, a_currs)  # (batch, actions)
+        predicts2 = self.critic2(s_currs, a_currs)
+        target = r + ((1. - dones) * self.gamma * value)
 
-        loss_rl_1 = mse_loss_function(predicts_1, target)
+        loss_rl = mse_loss_function(predicts, target.detach())
+        loss2_rl = mse_loss_function(predicts2, target.detach())
 
-        loss_rl_2 = mse_loss_function(predicts_2, target)
-        self.optim_critic_2.zero_grad()
-        self.optim_critic_2.step()
+        random_actions = torch.FloatTensor(predicts.shape[0] * self.n_random_actions, a_currs.shape[-1]).uniform_(-1, 1)
+        random_actions = random_actions.to(DEVICE)
 
-        loss_1 = loss_cql_1 + loss_rl_1
-        loss_2 = loss_cql_2 + loss_rl_2
+        s_currs_temp = s_currs.unsqueeze(1).repeat(1, self.n_random_actions, 1).view(
+            s_currs.shape[0] * self.n_random_actions, s_currs.shape[1])
+        curr_action_tensor, curr_log_action_probs = self.actor.get_action(state=s_currs_temp, train=True)
+        s_nexts_temp = s_nexts.unsqueeze(1).repeat(1, self.n_random_actions, 1).view(
+            s_nexts.shape[0] * self.n_random_actions, s_nexts.shape[1])
+        new_curr_action_tensor, new_log_action_probs = self.actor.get_action(state=s_nexts_temp, train=True)
 
-        loss_1.backward()
+        rand = self.critic.get_tensor_values(s_currs, random_actions)
+        rand2 = self.critic2.get_tensor_values(s_currs, random_actions)
+
+        curr_actions = self.critic.get_tensor_values(s_currs, curr_action_tensor.detach())
+        curr_actions2 = self.critic2.get_tensor_values(s_currs, curr_action_tensor.detach())
+
+        next_actions = self.critic.get_tensor_values(s_currs, new_curr_action_tensor.detach())
+        next_actions2 = self.critic2.get_tensor_values(s_currs, new_curr_action_tensor.detach())
+
+        # min_q (CQL term #1)
+        # NOTE: assuming min_q_weight (i.e. alpha) is 1
+        random_density_log = np.log(0.5 ** self.n_actions)
+
+        rand_value_1 = rand - random_density_log
+        rand_value_2 = rand2 - random_density_log
+
+        pred_value_1 = curr_actions - curr_log_action_probs.view(s_currs.shape[0], self.n_random_actions, 1).detach()
+        pred_value_2 = curr_actions2 - curr_log_action_probs.view(s_currs.shape[0], self.n_random_actions, 1).detach()
+
+        pred_value_1_next = next_actions - new_log_action_probs.view(s_nexts.shape[0], self.n_random_actions,
+                                                                     1).detach()
+        pred_value_2_next = next_actions2 - new_log_action_probs.view(s_nexts.shape[0], self.n_random_actions,
+                                                                      1).detach()
+
+        q1_term_pre_exp = torch.cat([rand_value_1, pred_value_1, pred_value_1_next], 1)
+        q2_term_pre_exp = torch.cat([rand_value_2, pred_value_2, pred_value_2_next], 1)
+
+        loss_cql_1 = torch.logsumexp(q1_term_pre_exp, dim=1).mean()
+        loss_cql_2 = torch.logsumexp(q2_term_pre_exp, dim=1).mean()
+
+        loss_cql_1 = loss_cql_1 - predicts.mean()
+        loss_cql_2 = loss_cql_2 - predicts2.mean()
+
+        # Bellman + CQL
+        loss = loss_rl + loss_cql_1
+        loss2 = loss2_rl + loss_cql_2
+
         self.optim_critic.zero_grad()
+        RETAIN_G = False
+        loss.backward(retain_graph=RETAIN_G)
         self.optim_critic.step()
-
-        loss_2.backward()
         self.optim_critic_2.zero_grad()
+        loss2.backward(retain_graph=RETAIN_G)
         self.optim_critic_2.step()
-
-        return
+        return loss, loss2
 
     def process_batch(self, x_batch):
         s_currs = x_batch.s_curr
@@ -154,13 +336,14 @@ class CQLSAC:
         dones = dones.float()
         return s_currs.to(DEVICE), a_currs.to(DEVICE), r.to(DEVICE), s_nexts.to(DEVICE), dones.to(DEVICE)
 
-    def train(self, x_batch):
+    def train(self, x_batch, ep):
         s_currs, a_currs, r, s_nexts, dones = self.process_batch(x_batch=x_batch)
-        value = self.get_v(state_batch=s_nexts)
-        self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, dones=dones)
         sample_action, log_action_probs = self.actor.get_action(state=s_currs, train=True)
-        self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
         self.train_alpha(log_action_probs=log_action_probs)
+        self.train_actor(s_currs=s_currs, sample_action=sample_action, log_action_probs=log_action_probs)
+        value = self.get_v(state_batch=s_nexts)
+        self.train_critic(value=value, s_currs=s_currs, a_currs=a_currs, r=r, s_nexts=s_nexts, dones=dones)
+
         self.update_weights()
         return
 
@@ -179,7 +362,8 @@ def main(episodes, exp_name, offline, overfit):
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
-    agent = SACOffline(n_states=n_states, n_actions=n_actions, ratio=(1.0, 0.0))
+    agent = CQLSAC(n_states=n_states, n_actions=n_actions, ratio=(1.0, 0.0))
+    # agent = CQLDDPG(n_states=n_states, n_actions=n_actions, ratio=(1.0, 0.0))
     for ep in range(episodes):
         _, data, _ = agent.experience_replay.sample(agent.batch_size)
 
@@ -250,8 +434,8 @@ def main(episodes, exp_name, offline, overfit):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exp_name", type=str, default="sac_offline_small_data_10_00", help="exp_name")
-    ap.add_argument("--episodes", type=int, default=1000, help="number of episodes to run")
+    ap.add_argument("--exp_name", type=str, default="saccql_with_is", help="exp_name")
+    ap.add_argument("--episodes", type=int, default=10000, help="number of episodes to run")
     ap.add_argument("--offline", action="store_true", help="number of episodes to run")
     ap.add_argument("--overfit", action="store_true", help="number of episodes to run")
     args = vars(ap.parse_args())

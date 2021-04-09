@@ -11,6 +11,8 @@ import torch
 
 from bc import BC
 from sac_offline import SACOffline
+from ddpg_offline import DDPGOffline
+from cql import CQLSAC, CQLDDPG
 
 torch.manual_seed(19971124)
 np.random.seed(42)
@@ -53,7 +55,7 @@ def generate_plot(episodes, expert_ratios, scores, colour_len, log_freq, agent_t
     plot.figure.savefig(path)
 
 
-def main(episodes, exp_name, agent_type, num_trials):
+def main(episodes, agent_type, num_trials):
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
@@ -77,10 +79,14 @@ def main(episodes, exp_name, agent_type, num_trials):
             ratio = (expert_data_ratio, 1.0 - expert_data_ratio)
             if agent_type == "SACOffline":
                 agent = SACOffline(n_states=n_states, n_actions=n_actions, ratio=ratio)
+            elif agent_type == "DDPGOffline":
+                agent = DDPGOffline(n_states=n_states, n_actions=n_actions, ratio=ratio)
             elif agent_type == "BC":
                 agent = BC(n_states=n_states, n_actions=n_actions, ratio=ratio)
-            elif agent_type == "CQL":
-                agent = None
+            elif agent_type == "CQLSAC":
+                agent = CQLSAC(n_states=n_states, n_actions=n_actions, ratio=ratio)
+            elif agent_type == "CQLDDPG":
+                agent = CQLDDPG(n_states=n_states, n_actions=n_actions, ratio=ratio)
 
             for ep in range(episodes):
                 _, data, _ = agent.experience_replay.sample(agent.batch_size)
@@ -137,8 +143,8 @@ def main(episodes, exp_name, agent_type, num_trials):
                         if done:
                             print(f"ep:{ep}:################Goal Reached###################", score)
                             agent.test_scores.append(score)
-
             per_ratio_scores += agent.test_scores
+
         total_episodes += per_ratio_logged_episodes
         total_expert_ratios += per_ratio_logged_expert_ratios
         total_scores += per_ratio_scores
@@ -151,10 +157,20 @@ def main(episodes, exp_name, agent_type, num_trials):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exp_name", type=str, default="experiment_bc", help="exp_name")
     ap.add_argument("--episodes", type=int, default=300, help="number of episodes to run")
-    ap.add_argument("--agent_type", type=str, default="SACOffline", help="type of agent to test")
+    ap.add_argument("--agent_type", type=str, default="CQLSAC", help="type of agent to test")
     ap.add_argument("--num_trials", type=int, default=2, help="number of trials to average over")
     args = vars(ap.parse_args())
-    trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], agent_type=args["agent_type"],
-                         num_trials=args["num_trials"])
+    agent_type = args["agent_type"]
+    episodes = args["episodes"]
+    num_trials = args["num_trials"]
+    trained_agent = main(episodes=episodes, agent_type=agent_type, num_trials=num_trials)
+
+    _path = os.path.join("experiments", "weights")
+
+    if not os.path.isdir(_path):
+        os.makedirs(_path, exist_ok=False)
+
+    weight_name = f"{agent_type}_trained_for_{episodes}.pt"
+    path = os.path.join(_path, weight_name)
+    torch.save(trained_agent.actor, path)
