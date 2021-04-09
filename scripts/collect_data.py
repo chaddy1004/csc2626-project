@@ -8,12 +8,13 @@ import pandas as pd
 import torch
 
 from ExpertPolicy.network import Actor
-from utils.corrupted_policy import Policy, NoisyPolicy, LaggyPolicy
+from utils.corrupted_policy import Policy, NoisyPolicy, LaggyPolicy, HeteroscedasticPolicy
 
 noise_type_to_policy_type = {
     'none': 0,
     'laggy': 1,
-    'noisy': 2
+    'noisy': 2,
+    'heteroscedastic': 3
 }
 
 
@@ -23,7 +24,7 @@ def get_args():
     parser.add_argument('--env', type=str, default='LunarLanderContinuous-v2')
     parser.add_argument('--policy_file', type=str, default='ExpertPolicy/policy_trained_on_gpu_state_dict.pt')
     parser.add_argument('--output_dir', type=str, default='output/')
-    parser.add_argument('--noise_type', choices=['none', 'noisy', 'laggy'], default='none')
+    parser.add_argument('--noise_type', choices=['none', 'noisy', 'laggy', 'heteroscedastic'], default='none')
     parser.add_argument('--num_episodes', type=int, default=1)
     parser.add_argument('--max_iterations', type=int, default=500)
     args = parser.parse_args()
@@ -99,12 +100,16 @@ if __name__ == '__main__':
 
     df_all = pd.DataFrame()
     policy = get_policy(args.policy_file, n_states=env.observation_space.shape[0], n_actions=env.action_space.shape[0])
+    if args.noise_type == 'none':
+        policy = Policy(policy)
     if args.noise_type == 'noisy':
         policy = NoisyPolicy(policy, env)
     elif args.noise_type == 'laggy':
         policy = LaggyPolicy(policy)
+    elif args.noise_type == 'heteroscedastic':
+        policy = HeteroscedasticPolicy(policy)
     else:
-        policy = Policy(policy)
+        raise NotImplementedError(f'Noise type: {args.noise_type} is not valid')
 
     policy_type = noise_type_to_policy_type[args.noise_type]
 
