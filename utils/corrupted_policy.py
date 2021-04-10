@@ -66,3 +66,13 @@ class LaggyPolicy(CorruptedPolicy):
         self.store_action(action)
 
         return action
+
+
+class HeteroscedasticPolicy(CorruptedPolicy):
+    def __init__(self, policy):
+        super().__init__(policy)
+
+    def corrupt_action(self, action):
+        action += [3., 10.]*action*np.random.randn(2)
+        action = np.clip(action, -1, 1)
+        return action
