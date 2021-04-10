@@ -107,6 +107,7 @@ celerybeat.pid
 .env
 .venv
 env/
+change5/
 venv/
 ENV/
 env.bak/
@@ -134,3 +135,4 @@ dmypy.json
 LunarLanderData/
 logs/SAC_LunarLander_Score
 logs
+*.pt
