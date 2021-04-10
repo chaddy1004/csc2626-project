@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 from collections import namedtuple
+import pickle
 
 import gym
 import numpy as np
@@ -51,6 +52,9 @@ def generate_plot(episodes, expert_ratios, scores, colour_len, log_freq, agent_t
     if not os.path.isdir(_path):
         os.makedirs(_path, exist_ok=False)
     figname = f"{agent_type}.png"
+    objname = f"{agent_type}.pkl"
+    f = open(os.path.join(_path, objname), 'wb')
+    pickle.dump(plot, f)
     path = os.path.join(_path, figname)
     plot.figure.savefig(path)
 
