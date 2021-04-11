@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
+from torch.utils.tensorboard import SummaryWriter
 
 from sac_on_off import SAC
 
@@ -57,12 +58,17 @@ def generate_plot(episodes, expert_ratios, scores, colour_len, log_freq, agent_t
 
 
 def main(episodes_off, episodes_on, agent_type, num_trials):
+    # Log output
+    exp_name = "sac_on_off"
+    logdir = os.path.join("experiments", "logs", exp_name, agent_type)
+    os.makedirs(logdir, exist_ok=True)
+    log_freq = 100
+
     env = gym.make('LunarLanderContinuous-v2')
     n_states = env.observation_space.shape[0]  # shape returns a tuple
     n_actions = env.action_space.shape[0]
     agent = None
     EXPERT_DATA_RATIOS = [0.0, 1.0]
-    log_freq = 100
     exploration_eps = -1
 
     total_episodes = []
@@ -85,6 +91,11 @@ def main(episodes_off, episodes_on, agent_type, num_trials):
             elif agent_type == "CQLSAC":
                 agent = SAC(n_states=n_states, n_actions=n_actions, ratio=ratio, cql=True, iS=True)
 
+            # Logging
+            exp_name = "_opt_ratio_" + str(expert_data_ratio) + "_trial_" + str(trial)
+            logdir2 = os.path.join(logdir, str(expert_data_ratio), str(trial))
+            os.makedirs(logdir2, exist_ok=True)
+            writer = SummaryWriter(logdir2, filename_suffix=exp_name)
             for ep in range(episodes_off):
                 _, data, _ = agent.experience_replay.sample(agent.batch_size)
 
@@ -102,7 +113,7 @@ def main(episodes_off, episodes_on, agent_type, num_trials):
                 sample.s_next = s_next_tensor
                 sample.done = done
 
-                agent.train(sample, ep)
+                losses = agent.train(sample, ep)
 
                 # testing on environment
                 s_curr = env.reset()
@@ -140,10 +151,18 @@ def main(episodes_off, episodes_on, agent_type, num_trials):
                         if done:
                             print(f"ep:{ep}:################Goal Reached###################", score)
                             agent.test_scores.append(score)
+                            writer.add_scalars("eval", {"score": score}, ep)
+                            writer.add_scalars("training", {"loss": losses[0],
+                                                "loss2": losses[1],
+                                                "loss_actor": losses[2],
+                                                "alpha_loss": losses[3]}, ep)
 
             # Transition to online
             print("########## TRANSITION: offline -> online ##########")
             agent.offline = False
+            agent.cql = False
+            agent.iS = False
+            agent.bc = False
 
             for ep in range(episodes_on): # online
                 s_curr = env.reset()
@@ -175,23 +194,26 @@ def main(episodes_off, episodes_on, agent_type, num_trials):
 
                     if len(agent.experience_replay_on) < agent.batch_size:
                         agent.experience_replay_on.append(sample)
-                        print("appending to buffer....")
                     else:
                         agent.experience_replay_on.append(sample)
                         if ep > exploration_eps:
                             x_batch = random.sample(agent.experience_replay_on, agent.batch_size)
-                            agent.train(x_batch, ep)
+                            losses = agent.train(x_batch, ep)
 
                     s_curr = s_next
                     score += r
                     step += 1
                     if done:
-                        print("DONE", ep)
-                        if ep % 1 == 0:
-                            per_ratio_logged_episodes.append(ep)
-                            per_ratio_logged_expert_ratios.append(expert_data_ratio)
-                            print(f"ep:{ep}:################Goal Reached###################", score)
-                            agent.test_scores.append(score)
+                        per_ratio_logged_episodes.append(ep + episodes_off)
+                        per_ratio_logged_expert_ratios.append(expert_data_ratio)
+                        print(f"ep:{ep}:################Goal Reached###################", score)
+                        agent.test_scores.append(score)
+                        writer.add_scalars("eval", {"score": score}, ep + episodes_off)
+                        writer.add_scalars("training", {"loss": losses[0],
+                                            "loss2": losses[1],
+                                            "loss_actor": losses[2],
+                                            "alpha_loss": losses[3]}, ep + episodes_off)
+            writer.close()
             per_ratio_scores += agent.test_scores
         total_episodes += per_ratio_logged_episodes
         total_expert_ratios += per_ratio_logged_expert_ratios
@@ -206,7 +228,7 @@ def main(episodes_off, episodes_on, agent_type, num_trials):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--episodes_off", type=int, default=5000, help="number of episodes to run offline")
-    ap.add_argument("--episodes_on", type=int, default=500, help="number of episodes to run online")
+    ap.add_argument("--episodes_on", type=int, default=1000, help="number of episodes to run online")
     ap.add_argument("--agent_type", type=str, default="CQLSAC", help="type of offline agent to test")
     ap.add_argument("--num_trials", type=int, default=2, help="number of trials to average over")
     args = vars(ap.parse_args())
