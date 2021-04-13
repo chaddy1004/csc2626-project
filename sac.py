@@ -11,9 +11,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from ExpertPolicy.network import Actor, Critic
 
-torch.manual_seed(19971124)
-np.random.seed(42)
-random.seed(101)
+torch.manual_seed(0)
+np.random.seed(0)
+random.seed(0)
 
 mse_loss_function = torch.nn.MSELoss()
 
@@ -157,6 +157,7 @@ def main(episodes, exp_name, offline):
         done = False
         score = 0
         step = 0
+        losses = None
         while not done:
             s_curr_tensor = torch.from_numpy(s_curr)
             a_curr_tensor, _ = agent.actor.get_action(s_curr_tensor.to(DEVICE), train=True)
@@ -204,7 +205,7 @@ def main(episodes, exp_name, offline):
                     writer.add_scalars('training loss', {'loss': losses[0].item(),
                                                          'loss2': losses[1].item(),
                                                          'loss_actor': losses[2].item(),
-                                                         'alpha_loss': losses[3].item()})
+                                                         'alpha_loss': losses[3].item()}, ep)
 
     writer.close()
     return agent
@@ -212,8 +213,8 @@ def main(episodes, exp_name, offline):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exp_name", type=str, default="SAC_LunarLander_Score", help="exp_name")
-    ap.add_argument("--episodes", type=int, default=700, help="number of episodes to run")
+    ap.add_argument("--exp_name", type=str, default="SAC_Online_Baseline", help="exp_name")
+    ap.add_argument("--episodes", type=int, default=6000, help="number of episodes to run")
     ap.add_argument("--offline", action="store_true", help="number of episodes to run")
     args = vars(ap.parse_args())
     trained_agent = main(episodes=args["episodes"], exp_name=args["exp_name"], offline=args["exp_name"])

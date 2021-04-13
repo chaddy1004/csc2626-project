@@ -9,7 +9,7 @@ def main(name):
     _path = os.path.join("experiments", "figures")
     objname = f"{name}.pkl"
     figname_png = f"{name}_modified.png"
-    figname_eps = f"{name}_modified.eps"
+    figname_eps = f"{name}_modified.pdf"
     file = open(os.path.join(_path, objname), 'rb')
     plot = pickle.load(file)
 
@@ -17,7 +17,15 @@ def main(name):
     # plot.set_title(f"MODIFIED")
 
     # rotate the xlabel so that it does not overlap
+
+    # new_x_tick = [i for i in range(x_tick_min, x_tick_max, 500)]
     plot.set_xticklabels(plot.get_xticks(), rotation=45)
+    for ind, label in enumerate(plot.get_xticklabels()):
+        if ind % 10 == 0:  # every 10th label is kept
+            label.set_visible(True)
+        else:
+            label.set_visible(False)
+    plt.ylim(-1000, 400)
 
     # add padding on bottom and left so that xlabel and ylabel do not get cut off
     plt.gcf().subplots_adjust(bottom=0.15)
@@ -29,6 +37,7 @@ def main(name):
     plot.figure.savefig(path_png)
 
     path_eps = os.path.join(_path, figname_eps)
+    # plot.set_rasterized(True)
     plot.figure.savefig(path_eps)
 
 

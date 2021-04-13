@@ -20,80 +20,103 @@ def smooth(csv_path, weight=0.96):
     # save.to_csv('smooth_' + csv_path)
 
 
-f, (ax1, ax2) = plt.subplots(ncols=2, nrows=1, sharey=True)
+f, (ax1, ax2) = plt.subplots(ncols=2, nrows=1, gridspec_kw={ 'top':0.92,  'wspace': 0, 'hspace': 0, 'right': 0.96}, sharey=True)
 
-# df = pd.read_csv("cqlsac_0.csv")
-df = smooth("cqlsac_0.csv")
-df2 = smooth("cqlsac_1.csv")
+df_cql_0 = smooth("cql_0.csv")
+df_cql_1 = smooth("cql_1.csv")
 
-df3 = smooth("bc_0.csv")
-df4 = smooth("bc_1.csv")
+df_bc_0 = smooth("bc_0.csv")
+df_bc_1 = smooth("bc_1.csv")
 
-df.insert(0, "Agent", ["CQLSAC" for _ in range(len(df.index))], allow_duplicates=False)
-df.insert(0, "Ratio", ["0.0" for _ in range(len(df.index))], allow_duplicates=False)
+df_sacoff_0 = smooth("sacoff_0.csv")
+df_sacoff_1 = smooth("sacoff_1.csv")
 
-df2.insert(0, "Agent", ["CQLSAC" for _ in range(len(df.index))], allow_duplicates=False)
-df2.insert(0, "Ratio", ["1.0" for _ in range(len(df.index))], allow_duplicates=False)
+df_sac_bl = smooth("sac_baseline.csv")
 
-df3.insert(0, "Agent", ["BC" for _ in range(len(df.index))], allow_duplicates=False)
-df3.insert(0, "Ratio", ["0.0" for _ in range(len(df.index))], allow_duplicates=False)
+df_cql_0.insert(0, "Agent", ["CQLSAC" for _ in range(len(df_cql_0.index))], allow_duplicates=False)
+df_cql_0.insert(0, "Ratio", ["0.0" for _ in range(len(df_cql_0.index))], allow_duplicates=False)
+df_cql_1.insert(0, "Agent", ["CQLSAC" for _ in range(len(df_cql_1.index))], allow_duplicates=False)
+df_cql_1.insert(0, "Ratio", ["1.0" for _ in range(len(df_cql_1.index))], allow_duplicates=False)
 
-df4.insert(0, "Agent", ["BC" for _ in range(len(df.index))], allow_duplicates=False)
-df4.insert(0, "Ratio", ["1.0" for _ in range(len(df.index))], allow_duplicates=False)
-# df_main = pd.DataFrame()
+df_bc_0.insert(0, "Agent", ["BC" for _ in range(len(df_bc_0.index))], allow_duplicates=False)
+df_bc_0.insert(0, "Ratio", ["0.0" for _ in range(len(df_bc_0.index))], allow_duplicates=False)
+df_bc_1.insert(0, "Agent", ["BC" for _ in range(len(df_bc_1.index))], allow_duplicates=False)
+df_bc_1.insert(0, "Ratio", ["1.0" for _ in range(len(df_bc_1.index))], allow_duplicates=False)
 
-df_main = pd.concat([df, df2, df3, df4], axis=0)
-# print(df.head())
-# print(df2.head())
+df_sacoff_0.insert(0, "Agent", ["SACOffline" for _ in range(len(df_sacoff_0.index))], allow_duplicates=False)
+df_sacoff_0.insert(0, "Ratio", ["0.0" for _ in range(len(df_sacoff_0.index))], allow_duplicates=False)
+df_sacoff_1.insert(0, "Agent", ["SACOffline" for _ in range(len(df_sacoff_1.index))], allow_duplicates=False)
+df_sacoff_1.insert(0, "Ratio", ["1.0" for _ in range(len(df_sacoff_1.index))], allow_duplicates=False)
 
-# df_main.insert(0, "Value2", df["Value"], allow_duplicates=False)
-# df_main.insert(0, "Value1", df["Value"], allow_duplicates=False)
-# df_main.insert(0, "Step",df["Step"], allow_duplicates=False)
+df_sac_bl.insert(0, "Agent", ["SAC Baseline" for _ in range(len(df_sac_bl.index))], allow_duplicates=False)
+df_sac_bl.insert(0, "Ratio", ["1.0" for _ in range(len(df_sacoff_1.index))], allow_duplicates=False)
 
-print(len(df.index))
-print(len(df2.index))
+df_main = pd.concat([df_cql_0, df_cql_1, df_bc_0, df_bc_1, df_sacoff_0, df_sacoff_1, df_sac_bl], axis=0)
 
-print(df_main.head())
-print(len(df_main.index))
+df_sac_bl.plot.line(x='Step', y='Value', ax=ax1, color="dimgray", alpha=1)
+df_bc_0.plot.line(x='Step', y='Value', ax=ax1, color="dodgerblue", alpha=1)
+df_bc_1.plot.line(x='Step', y='Value', ax=ax1, color="dodgerblue", alpha=0.5)
+df_cql_0.plot.line(x='Step', y='Value', ax=ax1, color="red", alpha=1)
+df_cql_1.plot.line(x='Step', y='Value', ax=ax1, color="red", alpha=0.5)
+df_sacoff_0.plot.line(x='Step', y='Value', ax=ax1, color="forestgreen", alpha=1)
+df_sacoff_1.plot.line(x='Step', y='Value', ax=ax1, color="forestgreen", alpha=0.5)
 
-sns.lineplot(data=df_main, x="Step", y="Value", hue="Ratio", style="Agent", palette=sns.color_palette("hls", 2),
-             markers=True, ax=ax1)
+df_sac_bl.plot.line(x='Step', y='Value', ax=ax2, color="dimgray", alpha=1)
+df_bc_0.plot.line(x='Step', y='Value', ax=ax2, color="dodgerblue", alpha=1)
+df_bc_1.plot.line(x='Step', y='Value', ax=ax2, color="dodgerblue", alpha=0.5)
+df_cql_0.plot.line(x='Step', y='Value', ax=ax2, color="red", alpha=1)
+df_cql_1.plot.line(x='Step', y='Value', ax=ax2, color="red", alpha=0.5)
+df_sacoff_0.plot.line(x='Step', y='Value', ax=ax2, color="forestgreen", alpha=1)
+df_sacoff_1.plot.line(x='Step', y='Value', ax=ax2, color="forestgreen", alpha=0.5)
 
-sns.lineplot(data=df_main, x="Step", y="Value", hue="Ratio", style="Agent", palette=sns.color_palette("hls", 2),
-             markers=True, ax=ax2, markevery=20)
+labels = ["SAC (online)", "BC 0.0", "BC 1.0", "CQLSAC 0.0", "CQLSAC 1.0", "SAC-Off 0.0", "SAC-Off 1.0"]
+ax2.legend(labels=labels)
 
-# x=[ep for ep in range(0, max(episodes) + log_freq, log_freq)]
-# y=[0 for _ in range(0, max(episodes) + log_freq, log_freq)]
+XMIN = 4700
+XMAX = 6000
+ax1.set_xlim(0, XMIN)
+ax2.set_xlim(XMIN, XMAX)
 
-# sns.lineplot(x=[5000, 5000], y=[-400, 300], color="black", linestyle="--")
-# plt.plot(x = [5000,5000], y = [-400, 300], color="black")
-print(max(df["Step"]))
+ax1.annotate("Offline",
+             xy=(1100, 350),
+             xytext=(1100, 350),
+             arrowprops={"edgecolor": "dimgray", "ls": '-', "lw": 0, "arrowstyle": '-|>'},
+             bbox={"boxstyle": "round", "pad": 0.4, "facecolor": "oldlace", "edgecolor": "tan"},
+             ha="center", fontsize=15,
+             color="black", alpha=1
+             )
 
-ax1.set_xlim(0, 4800)
-ax2.set_xlim(4800, max(df["Step"]) + 75)
-ax2.axvline(x=4990, color=(0, 0, 0, 0.5), linestyle='-.')
+ax2.annotate("Online",
+             xy=(5350, 350),
+             xytext=(5350, 350),
+             arrowprops={"edgecolor": "dimgray", "ls": '-', "lw": 0, "arrowstyle": '-|>'},
+             bbox={"boxstyle": "round", "pad": 0.4, "facecolor": "thistle", "edgecolor": "palevioletred"},
+             ha="center", fontsize=15,
+             color="black", alpha=1
+             )
+
+vertical_line = 4990
+
+ax1.axvspan(0, XMIN, fc="lightyellow", alpha=0.3)
+ax2.axvspan(XMIN, vertical_line, fc="lightyellow", alpha=0.3)
+ax2.axvspan(vertical_line, XMAX, fc="plum", alpha=0.2)
+
+ax1.legend().set_visible(False)
+ax1.spines['right'].set_visible(False)
+ax2.spines['left'].set_visible(False)
 ax2.get_yaxis().set_visible(False)
+ax1.xaxis.label.set_visible(False)
+ax2.xaxis.label.set_visible(False)
 
-f.subplots_adjust(wspace=0.0)
-plt.ylim(-400, 300)
-f.show()
+ax2.axvline(x=vertical_line, color=(0, 0, 0, 0.5), linestyle='-.')
 
-# p = sns.color_palette("Blues", 1)
-# colors = []
-# for _p in p:
-#     print(_p)
-#     c = (0, _p[1], _p[2], 1)
-#     colors.append(c)
-#
-# print(colors)
-#
-# sns.set_palette(colors)
-# pal = sns.color_palette(colors)
-#
-#
-# # pal = sns.color_palette(pal)
-# sns.lineplot(data=df, x="Step", y="Value",color=(255,0,0))
-# sns.lineplot(data=df2, x="Step", y="Value", color=(0,0,0))
-# plt.show()
-#
-# # print(p)
+YMIN = -700
+YMAX = 450
+plt.ylim(YMIN, YMAX)
+plt.suptitle('Scores of each agent during training', fontsize=16)
+f.text(0.52, 0.03, 'Episode', ha='center', fontsize=10)
+f.text(0.03, 0.5, 'Episodic Score', va='center', rotation='vertical', fontsize=10)
+# add padding on bottom and left so that xlabel and ylabel do not get cut off
+# f.show()
+f.savefig("training_overall.pdf")
+
